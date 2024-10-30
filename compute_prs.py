@@ -30,7 +30,7 @@ def get_args_parser():
         "--data_path", default="/shared/group/ilsvrc", type=str, help="dataset path"
     )
     parser.add_argument(
-        "--dataset", type=str, default="imagenet", help="imagenet, cub or waterbirds"
+        "--dataset", type=str, default="CIFAR10", help="imagenet, cub or waterbirds"
     )
     parser.add_argument("--num_workers", default=10, type=int)
     parser.add_argument(

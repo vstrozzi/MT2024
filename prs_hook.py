@@ -11,13 +11,18 @@ from pathlib import Path
 
 
 class PRSLogger(object):
+    """
+    Class computing Residual Sum of components of a CLIP-like model to the final output.
+    Can be run on cuda devices.
+    l = number of layers, n = number of patches, h = number of heads, d = dimension of the attention
+    """
     def __init__(self, model, device, spatial: bool = True):
         self.current_layer = 0
         self.device = device
         self.attentions = []
         self.mlps = []
-        self.spatial = spatial
-        self.post_ln_std = None
+        self.spatial = spatial # If we want to compute also the spatial contributions of each patch in the attention
+        self.post_ln_std = None # If the CLIP model uses pre-projection Layer Norm
         self.post_ln_mean = None
         self.model = model
 

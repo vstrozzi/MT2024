@@ -104,6 +104,7 @@ class TimmModel(nn.Module):
 
         self.head = nn.Sequential(head_layers)
 
+    # Freeze some parts of the model up to the last n unlocked_groups layeer
     def lock(self, unlocked_groups=0, freeze_bn_stats=False):
         """ lock modules
         Args:
@@ -112,7 +113,7 @@ class TimmModel(nn.Module):
         if not unlocked_groups:
             # lock full model
             for param in self.trunk.parameters():
-                param.requires_grad = False
+                param.requires_grad = False # freeze
             if freeze_bn_stats:
                 freeze_batch_norm_2d(self.trunk)
         else:

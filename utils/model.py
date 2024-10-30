@@ -118,6 +118,7 @@ def get_input_dtype(precision: str):
     return input_dtype
 
 
+## Function to build custom Vision Encoder models based on their library (NN.module), having predefined structure
 def _build_vision_tower(
         embed_dim: int,
         vision_cfg: CLIPVisionCfg,
