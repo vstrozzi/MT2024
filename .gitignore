@@ -1,2 +1,2 @@
 imagenet_seg/
- utils/__pycache__/
+__pycache__/
