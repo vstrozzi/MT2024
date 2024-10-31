@@ -119,6 +119,7 @@ def create_model(
         output_dict: Optional[bool] = None,
         require_pretrained: bool = False,
 ):
+    # Hf hub models are loaded from huggingface hub 
     has_hf_hub_prefix = model_name.startswith(HF_HUB_PREFIX)
     if has_hf_hub_prefix:
         model_id = model_name[len(HF_HUB_PREFIX):]
@@ -135,6 +136,7 @@ def create_model(
         pretrained_cfg = {}
         model_cfg = None
 
+    # add to device if requested
     if isinstance(device, str):
         device = torch.device(device)
 
@@ -146,9 +148,9 @@ def create_model(
             device=device,
             cache_dir=cache_dir,
         )
+    # timm models, torchvisions models, and custom models
     else:
         model_cfg = model_cfg or get_model_config(model_name)
-        print(get_model_config(model_name))
         if model_cfg is not None:
             logging.info(f'Loaded {model_name} model config.')
         else:
