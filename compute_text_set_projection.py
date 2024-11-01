@@ -72,7 +72,9 @@ def get_text_features(model, tokenizer, lines,
 
 
 def main(args):
-    """Calculates the classifier projection weights."""
+    """
+    Evaluate the projection of the text encoder on a given dataset. Used for text-span.
+    """
     model, _, preprocess = create_model_and_transforms(args.model, pretrained=args.pretrained)
     tokenizer = get_tokenizer(args.model)
     model.to(args.device)

@@ -18,22 +18,30 @@ from utils.misc import accuracy
 @torch.no_grad()
 def replace_with_iterative_removal(data, text_features, texts, iters, rank, device):
     results = []
+    # Svd of attention matrix
     u, s, vh = np.linalg.svd(data, full_matrices=False)
     vh = vh[:rank]
     text_features = (
         vh.T.dot(np.linalg.inv(vh.dot(vh.T)).dot(vh)).dot(text_features.T).T
-    )  # Project the text to the span of W_OV
+    )  
+    # Project the text embedding to the span of the top rank eigenvectors of data matrix
+
     data = torch.from_numpy(data).float().to(device)
     mean_data = data.mean(dim=0, keepdim=True)
     data = data - mean_data
     reconstruct = einops.repeat(mean_data, "A B -> (C A) B", C=data.shape[0])
     reconstruct = reconstruct.detach().cpu().numpy()
     text_features = torch.from_numpy(text_features).float().to(device)
+
+    # Reconstruct attention head matrix by using max variance text embeddings
     for i in range(iters):
+
         projection = data @ text_features.T
         projection_std = projection.std(axis=0).detach().cpu().numpy()
+        # Take top text embedding with max variance
         top_n = np.argmax(projection_std)
         results.append(texts[top_n])
+        
         text_norm = text_features[top_n] @ text_features[top_n].T
         reconstruct += (
             (
@@ -93,7 +101,7 @@ def get_args_parser():
     parser.add_argument(
         "--num_of_last_layers",
         type=int,
-        default=8,
+        default=4,
         help="How many attention layers to replace.",
     )
     parser.add_argument(
@@ -102,7 +110,7 @@ def get_args_parser():
     parser.add_argument(
         "--texts_per_head",
         type=int,
-        default=10,
+        default=60,
         help="The number of text examples per head.",
     )
     parser.add_argument("--device", default="cuda:0", help="device to use for testing")
@@ -110,6 +118,9 @@ def get_args_parser():
 
 
 def main(args):
+    """
+    Evaluate a CLIP representation for a given dataset of text. This is needed to run text_span algorithm.
+    """
     with open(
         os.path.join(args.input_dir, f"{args.dataset}_attn_{args.model}.npy"), "rb"
     ) as f:
@@ -123,13 +134,17 @@ def main(args):
         "rb",
     ) as f:
         classifier = np.load(f)
+    
+    labels = np.load(os.path.join(args.input_dir, f"{args.dataset}_labels_{args.model}.npy")) 
+
     print(f"Number of layers: {attns.shape[1]}")
     all_images = set()
-    # Mean-ablate the other parts
+    
+    # Mean-ablate the other parts 
     for i in tqdm.trange(attns.shape[1] - args.num_of_last_layers):
         for head in range(attns.shape[2]):
             attns[:, i, head] = np.mean(attns[:, i, head], axis=0, keepdims=True)
-    # Load text:
+    # Load text descriptions:
     with open(
         os.path.join(args.input_dir, f"{args.text_descriptions}_{args.model}.npy"), "rb"
     ) as f:
@@ -143,6 +158,8 @@ def main(args):
         ),
         "w",
     ) as w:
+        # Compute text span per head and approximate its output by projecting each activation to the span of its text.
+        # Evakuate the accuracy of the model on the given dataset.
         for i in tqdm.trange(attns.shape[1] - args.num_of_last_layers, attns.shape[1]):
             for head in range(attns.shape[2]):
                 results, images = replace_with_iterative_removal(
@@ -161,11 +178,11 @@ def main(args):
                 for text in images:
                     w.write(f"{text}\n")
 
+
         mean_ablated_and_replaced = mlps.sum(axis=1) + attns.sum(axis=(1, 2))
         projections = torch.from_numpy(mean_ablated_and_replaced).float().to(
             args.device
         ) @ torch.from_numpy(classifier).float().to(args.device)
-        labels = np.array([i // 50 for i in range(attns.shape[0])])
         current_accuracy = (
             accuracy(projections.cpu(), torch.from_numpy(labels))[0] * 100.0
         )

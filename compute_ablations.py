@@ -38,7 +38,12 @@ def get_args_parser():
 
 
 def main(args):
-    
+    """
+    Need to run compute_prs.py and compute_text_projection.py for the given model before running this script.
+    Verify the accuracy of the model on the given dataset on a zero-shot setting.
+    It compare a Baseline accuracy with the accuracy of the model after ablating different parts of the model. 
+    For evaluation it uses the cosine similarity between the model output and the labels.
+    """
     attns = np.load(os.path.join(args.input_dir, f"{args.dataset}_attn_{args.model}.npy"), mmap_mode="r")  # [b, l, h, d]
     mlps = np.load(os.path.join(args.input_dir, f"{args.dataset}_mlp_{args.model}.npy"), mmap_mode="r")  # [b, l+1, d]
     with open(
@@ -46,21 +51,24 @@ def main(args):
         "rb",
     ) as f:
         classifier = np.load(f)
-    if args.dataset == "imagenet":
-        labels = np.array([i // 5 for i in range(attns.shape[0])])
-    else:
-        with open(
-            os.path.join(args.input_dir, f"{args.dataset}_labels.npy"), "rb"
-        ) as f:
-            labels = np.load(f)
+
+    labels = np.load(os.path.join(args.input_dir, f"{args.dataset}_labels_{args.model}.npy")) 
+    
+    print(attns.shape, mlps.shape, classifier.shape, labels.shape)
+    # Baseline accuracy, here simply compute the prediction of the model by summing all the activations
+    # of the model(i.e. reconstruct normal output of ViT) and multiply it by the classifier Matrix.
     baseline = attns.sum(axis=(1, 2)) + mlps.sum(axis=1)
+    # Return accuracy of prediction
     baseline_acc = (
         accuracy(
-            torch.from_numpy(baseline @ classifier).float(), torch.from_numpy(labels)
+            torch.from_numpy(baseline @ classifier).float(),
+            torch.from_numpy(labels)
         )[0]
         * 100
     )
     print("Baseline:", baseline_acc)
+
+    # Mean ablate all MLPS across all the dataset prediction
     mlps_mean = einops.repeat(mlps.mean(axis=0), "l d -> b l d", b=attns.shape[0])
     mlps_ablation = attns.sum(axis=(1, 2)) + mlps_mean.sum(axis=1)
     mlps_ablation_acc = (
@@ -71,6 +79,8 @@ def main(args):
         * 100
     )
     print("+ MLPs ablation:", mlps_ablation_acc)
+
+    # Mean ablate CLS across all the dataset
     mlps_no_layers = mlps.sum(axis=1)
     attns_no_cls = attns.sum(axis=2)
     with open(
@@ -87,6 +97,7 @@ def main(args):
         * 100
     )
     print("+ CLS ablation:", no_cls_acc)
+
     mlp_and_no_cls_ablation = attns_no_cls.sum(axis=1) + mlps_mean.sum(axis=1)
     mlp_and_no_cls_ablation_acc = (
         accuracy(
@@ -96,9 +107,10 @@ def main(args):
         * 100
     )
     print("+ MLPs + CLS ablation:", mlp_and_no_cls_ablation_acc)
+
     no_heads_attentions = attns.sum(axis=(2))
     all_accuracies = [baseline_acc]
-    for layer in range(attns.shape[1]):
+    for layer in range(attns.shape[1]): # Ablate individual layers attentions
         current_model = (
             np.sum(
                 np.mean(no_heads_attentions[:, :layer], axis=0, keepdims=True), axis=1

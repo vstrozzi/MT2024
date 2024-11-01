@@ -75,7 +75,10 @@ def zero_shot_classifier(model, tokenizer, classnames, templates,
 
 
 def main(args):
-    """Calculates the classifier projection weights."""
+    """
+    For a fixed model, evaluate the embeddings of the classes labbels in the dataset using
+    the CLIP text encoder. Save the embeddings in a numpy file.
+    """
     model, _, preprocess = create_model_and_transforms(args.model, pretrained=args.pretrained)
     tokenizer = get_tokenizer(args.model)
     model.to(args.device)

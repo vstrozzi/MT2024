@@ -49,6 +49,9 @@ def get_args_parser():
 
 
 def main(args):
+    """
+    Ablation of only specific heads
+    """
     if args.model == "ViT-H-14":
         to_mean_ablate_setting = [(31, 12), (30, 11), (29, 4)]
         to_mean_ablate_geo = [(31, 8), (30, 15), (30, 12), (30, 6), (29, 14), (29, 8)]
@@ -86,14 +89,13 @@ def main(args):
     ) as f:
         classifier = np.load(f)
 
-    if args.dataset == "imagenet":
-        labels = np.array([i // 50 for i in range(attns.shape[0])])
-    else:
-        with open(
-            os.path.join(args.input_dir, f"{args.dataset}_labels.npy"), "rb"
-        ) as f:
-            labels = np.load(f)
-            labels = labels[:, :, 0]
+
+    with open(
+        os.path.join(args.input_dir, f"{args.dataset}_labels_{args.model}.npy"), "rb"
+    ) as f:
+        labels = np.load(f)
+        labels = labels[:, :, 0]
+        
     baseline = attns.sum(axis=(1, 2)) + mlps.sum(axis=1)
     baseline_acc = full_accuracy(
         torch.from_numpy(baseline @ classifier).float(),
