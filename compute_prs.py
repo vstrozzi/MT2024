@@ -28,7 +28,7 @@ def get_args_parser():
     parser.add_argument("--pretrained", default="laion2b_s32b_b79k", type=str)
     # Dataset parameters
     parser.add_argument(
-        "--data_path", default="/shared/group/ilsvrc", type=str, help="dataset path"
+        "--data_path", default="./datasets/", type=str, help="dataset path"
     )
     parser.add_argument(
         "--dataset", type=str, default="CIFAR10", help="imagenet, cub or waterbirds"
@@ -38,8 +38,8 @@ def get_args_parser():
         "--output_dir", default="./output_dir", help="path where to save"
     )
     parser.add_argument("--device", default="cuda:0", help="device to use for testing")
-
-    parser.add_argument("--samples_per_class", default=1, help="device to use for testing", type=int)
+    parser.add_argument("--cache_dir", default=None, help="cache directory for models weight", type=str)
+    parser.add_argument("--samples_per_class", default=None, help="number of samples per class", type=int)
     return parser
 
 
@@ -49,10 +49,13 @@ def main(args):
     saves them in the output directory.
     """
     model, _, preprocess = create_model_and_transforms(
-        args.model, pretrained=args.pretrained
+        args.model, pretrained=args.pretrained, cache_dir=args.cache_dir
     )
+
     model.to(args.device)
     model.eval()
+
+    
     context_length = model.context_length
     vocab_size = model.vocab_size
 

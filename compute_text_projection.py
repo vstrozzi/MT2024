@@ -76,7 +76,7 @@ def zero_shot_classifier(model, tokenizer, classnames, templates,
 
 def main(args):
     """
-    For a fixed model, evaluate the embeddings of the classes labbels in the dataset using
+    For a fixed model, evaluate the embeddings of the classes labels in the dataset using
     the CLIP text encoder. Save the embeddings in a numpy file.
     """
     model, _, preprocess = create_model_and_transforms(args.model, pretrained=args.pretrained)

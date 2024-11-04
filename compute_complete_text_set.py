@@ -17,50 +17,63 @@ from utils.misc import accuracy
 
 @torch.no_grad()
 def replace_with_iterative_removal(data, text_features, texts, iters, rank, device):
+    """
+    This function performs iterative removal and reconstruction of the attention head matrix
+    using the provided text features.
+
+    Args:
+        data: The attention head matrix.
+        text_features: The text features matrix (clip embedding).
+        texts: Original text descriptions.
+        iters: Number of iterations to perform.
+        rank: The rank of the approximation matrix (i.e. # of text_features to preserve).
+        device: The device to perform computations on.
+
+    Returns:
+        reconstruct: The reconstructed attention head matrix.
+        results: List of text descriptions with maximum variance.
+    """
     results = []
-    # Svd of attention matrix
+    # Svd of attention head matrix
     u, s, vh = np.linalg.svd(data, full_matrices=False)
     vh = vh[:rank]
-    text_features = (
-        vh.T.dot(np.linalg.inv(vh.dot(vh.T)).dot(vh)).dot(text_features.T).T
-    )  
-    # Project the text embedding to the span of the top rank eigenvectors of data matrix
+    # Get the projection of text embeddings into head activations matrix space
+    text_features = (vh.T @ vh @ text_features.T).T
 
+        
+    # Mean center the data matrix
     data = torch.from_numpy(data).float().to(device)
     mean_data = data.mean(dim=0, keepdim=True)
-    data = data - mean_data
-    reconstruct = einops.repeat(mean_data, "A B -> (C A) B", C=data.shape[0])
+    data = data - mean_data # mean center activations
+    reconstruct = torch.clone(data)
     reconstruct = reconstruct.detach().cpu().numpy()
     text_features = torch.from_numpy(text_features).float().to(device)
 
-    # Reconstruct attention head matrix by using max variance text embeddings
+    # Reconstruct attention head matrix by using projection on nr. iters max variance texts embeddings
     for i in range(iters):
-
-        projection = data @ text_features.T
-        projection_std = projection.std(axis=0).detach().cpu().numpy()
-        # Take top text embedding with max variance
+        # Projects each data point (rows in data) into the feature space defined by the text embeddings.
+        # Each row in projection now represents how each attention head activation vector i aligns with each text embedding j (i, j),
+        # quantifying the contribution of each text_feature to the data in this iteration.
+        projection = data @ text_features.T # Nxd * dxM, cos similarity on each row
+        projection_std = projection.std(axis=0).detach().cpu().numpy() 
+        # Take top text embedding with max variance for the data matrix
         top_n = np.argmax(projection_std)
         results.append(texts[top_n])
         
+        # Rank 1 approximation 
         text_norm = text_features[top_n] @ text_features[top_n].T
-        reconstruct += (
-            (
-                (data @ text_features[top_n] / text_norm)[:, np.newaxis]
-                * text_features[top_n][np.newaxis, :]
-            )
-            .detach()
-            .cpu()
-            .numpy()
-        )
-        data = data - (
-            (data @ text_features[top_n] / text_norm)[:, np.newaxis]
-            * text_features[top_n][np.newaxis, :]
-        )
+        rank_1_approx = (data @ text_features[top_n] / text_norm)[:, np.newaxis]\
+                        * text_features[top_n][np.newaxis, :]
+        reconstruct += rank_1_approx.detach().cpu().numpy()
+        # Remove contribution from data matrix
+        data = data - rank_1_approx
+        # Remove contribution of text_feature from text embeddings
         text_features = (
             text_features
             - (text_features @ text_features[top_n] / text_norm)[:, np.newaxis]
             * text_features[top_n][np.newaxis, :]
         )
+        
     return reconstruct, results
 
 
@@ -71,7 +84,7 @@ def get_args_parser():
     parser.add_argument(
         "--model",
         default="ViT-H-14",
-        type=str,
+        type=str,   
         metavar="MODEL",
         help="Name of model to use",
     )
@@ -110,7 +123,7 @@ def get_args_parser():
     parser.add_argument(
         "--texts_per_head",
         type=int,
-        default=60,
+        default=20,
         help="The number of text examples per head.",
     )
     parser.add_argument("--device", default="cuda:0", help="device to use for testing")
@@ -138,7 +151,7 @@ def main(args):
     labels = np.load(os.path.join(args.input_dir, f"{args.dataset}_labels_{args.model}.npy")) 
 
     print(f"Number of layers: {attns.shape[1]}")
-    all_images = set()
+    all_texts = set()
     
     # Mean-ablate the other parts 
     for i in tqdm.trange(attns.shape[1] - args.num_of_last_layers):
@@ -159,10 +172,10 @@ def main(args):
         "w",
     ) as w:
         # Compute text span per head and approximate its output by projecting each activation to the span of its text.
-        # Evakuate the accuracy of the model on the given dataset.
-        for i in tqdm.trange(attns.shape[1] - args.num_of_last_layers, attns.shape[1]):
-            for head in range(attns.shape[2]):
-                results, images = replace_with_iterative_removal(
+        # Evaluate the accuracy of the model on the given dataset.
+        for i in tqdm.trange(attns.shape[1] - args.num_of_last_layers, attns.shape[1]): # for the selected layers
+            for head in range(attns.shape[2]): # for each head in the layer
+                results, texts = replace_with_iterative_removal(
                     attns[:, i, head],
                     text_features,
                     lines,
@@ -170,16 +183,18 @@ def main(args):
                     args.w_ov_rank,
                     args.device,
                 )
+                # Use the final reconstructed attention head matrix
                 attns[:, i, head] = results
-                all_images |= set(images)
+                all_texts |= set(texts)
                 w.write(f"------------------\n")
                 w.write(f"Layer {i}, Head {head}\n")
                 w.write(f"------------------\n")
-                for text in images:
+                for text in texts:
                     w.write(f"{text}\n")
 
-
+        # Get total contribution of the model
         mean_ablated_and_replaced = mlps.sum(axis=1) + attns.sum(axis=(1, 2))
+        # Get final clip output
         projections = torch.from_numpy(mean_ablated_and_replaced).float().to(
             args.device
         ) @ torch.from_numpy(classifier).float().to(args.device)
@@ -190,11 +205,11 @@ def main(args):
             f"Current accuracy:",
             current_accuracy,
             "\nNumber of texts:",
-            len(all_images),
+            len(all_texts),
         )
         w.write(f"------------------\n")
         w.write(
-            f"Current accuracy: {current_accuracy}\nNumber of texts: {len(all_images)}"
+            f"Current accuracy: {current_accuracy}\nNumber of texts: {len(all_texts)}"
         )
 
 
