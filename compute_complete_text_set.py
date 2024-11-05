@@ -95,30 +95,28 @@ def svd_data_approx(data, text_features, texts, iters, rank, device):
 
     # Svd of attention head matrix
     u, s, vh = np.linalg.svd(data, full_matrices=False)
-    vh = vh[:rank]
-    text_features_orig = text_features
+    vh = vh[:iters]
 
     # Get the projection of text embeddings into head activations matrix space
     text_features = (vh.T @ vh @ text_features.T).T
 
-    # Return the closest text_features in eigen space of data matrix of each eigenvector
+    # Return the closest text_features in eigen space of data matrix of top iters eigenvector
     simil_matrix = vh @ text_features.T # Nxd * dxM, cos similarity on each row
 
-    # Get only subset of top eigenvectors only
-    simil_matrix = simil_matrix[:iters, :]
     # Retrieve texts depending on the index
     indexes = np.squeeze(simil_matrix.argmax(axis=-1).astype(int)).tolist()
+    indexes = np.array([indexes]) if isinstance(indexes, int) else indexes
     data = data.astype(float)
-
-    results = [texts[idx] for idx in indexes]   
-    # Reconstruct original matrix with new basis
+    # Total strength eigenvectors
+    tot_str = np.sum(s)
+    results = [texts[idx] + ", with " + str(s[i]) + " on " + str(tot_str) + " (" + str(100 * s[i] / tot_str) + ")" for i, idx in enumerate(indexes)]    # Reconstruct original matrix with new basis
     reconstruct = np.zeros_like(data)
     # Project data matrix back and forth
     project_matrix = text_features[indexes, :]
     pseudo_inverse = np.linalg.pinv(project_matrix)
     reconstruct = (data @ project_matrix.T) @ pseudo_inverse.T
 
-    return reconstruct , results 
+    return reconstruct, results 
 
 
 def get_args_parser():
