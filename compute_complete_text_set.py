@@ -16,13 +16,13 @@ from utils.misc import accuracy
 
 
 @torch.no_grad()
-def replace_with_iterative_removal(data, text_features, texts, iters, rank, device):
+def text_span(data, text_features, texts, iters, rank, device):
     """
     This function performs iterative removal and reconstruction of the attention head matrix
     using the provided text features.
 
     Args:
-        data: The attention head matrix.
+        data: The attention head matrix (data in row).
         text_features: The text features matrix (clip embedding).
         texts: Original text descriptions.
         iters: Number of iterations to perform.
@@ -37,16 +37,14 @@ def replace_with_iterative_removal(data, text_features, texts, iters, rank, devi
     # Svd of attention head matrix
     u, s, vh = np.linalg.svd(data, full_matrices=False)
     vh = vh[:rank]
+    # return np.matrix(u[:, :80]) * np.diag(s[:80]) * np.matrix(vh[:80, :]) ,results # TASK: this line to test svd
     # Get the projection of text embeddings into head activations matrix space
     text_features = (vh.T @ vh @ text_features.T).T
 
         
     # Mean center the data matrix
     data = torch.from_numpy(data).float().to(device)
-    mean_data = data.mean(dim=0, keepdim=True)
-    data = data - mean_data # mean center activations
-    reconstruct = torch.clone(data)
-    reconstruct = reconstruct.detach().cpu().numpy()
+    reconstruct = np.zeros_like(data)
     text_features = torch.from_numpy(text_features).float().to(device)
 
     # Reconstruct attention head matrix by using projection on nr. iters max variance texts embeddings
@@ -73,8 +71,54 @@ def replace_with_iterative_removal(data, text_features, texts, iters, rank, devi
             - (text_features @ text_features[top_n] / text_norm)[:, np.newaxis]
             * text_features[top_n][np.newaxis, :]
         )
-        
+
     return reconstruct, results
+
+@torch.no_grad()
+def svd_data_approx(data, text_features, texts, iters, rank, device):
+    """
+    This function performs SVD-based approximation of the attention head matrix
+    using the provided text features.
+
+    Args:
+        data: The attention head matrix.
+        text_features: The text features matrix (clip embedding).
+        texts: Original text descriptions.
+        iters: Number of iterations to perform.
+        rank: The rank of the approximation matrix (i.e. # of text_features to preserve).
+        device: The device to perform computations on.
+
+    Returns:
+        reconstruct: The reconstructed attention head matrix.
+        results: List of text descriptions with maximum variance.
+    """
+
+    # Svd of attention head matrix
+    u, s, vh = np.linalg.svd(data, full_matrices=False)
+    vh = vh[:rank]
+    text_features_orig = text_features
+
+    # Get the projection of text embeddings into head activations matrix space
+    text_features = (vh.T @ vh @ text_features.T).T
+
+    # Return the closest text_features in eigen space of data matrix of each eigenvector
+    simil_matrix = vh @ text_features.T # Nxd * dxM, cos similarity on each row
+
+    # Get only subset of top eigenvectors only
+    simil_matrix = simil_matrix[:iters, :]
+    # Retrieve texts depending on the index
+    indexes = np.squeeze(simil_matrix.argmax(axis=-1).astype(int)).tolist()
+    data = data.astype(float)
+
+    results = [texts[idx] for idx in indexes]   
+    # Reconstruct original matrix with new basis
+    reconstruct = np.zeros_like(data)
+    # Project data matrix back and forth
+    project_matrix = text_features[indexes, :]
+    pseudo_inverse = np.linalg.pinv(project_matrix)
+    reconstruct = (data @ project_matrix.T) @ pseudo_inverse.T
+
+    return reconstruct , results 
 
 
 def get_args_parser():
@@ -175,7 +219,7 @@ def main(args):
         # Evaluate the accuracy of the model on the given dataset.
         for i in tqdm.trange(attns.shape[1] - args.num_of_last_layers, attns.shape[1]): # for the selected layers
             for head in range(attns.shape[2]): # for each head in the layer
-                results, texts = replace_with_iterative_removal(
+                results, texts = svd_data_approx(
                     attns[:, i, head],
                     text_features,
                     lines,

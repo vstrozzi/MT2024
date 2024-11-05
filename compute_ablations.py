@@ -111,6 +111,7 @@ def main(args):
     no_heads_attentions = attns.sum(axis=(2))
     all_accuracies = [baseline_acc]
     for layer in range(attns.shape[1]): # Ablate individual layers attentions
+        print(f"Layer {layer}")
         current_model = (
             np.sum(
                 np.mean(no_heads_attentions[:, :layer], axis=0, keepdims=True), axis=1

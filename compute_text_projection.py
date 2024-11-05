@@ -39,8 +39,11 @@ def zero_shot_classifier(model, tokenizer, classnames, templates,
                          device, amp=True, use_format=False):
     """
     This function returns zero-shot vectors for each class in order
-    to use it for zero-shot classification.
-    
+    to use it for zero-shot classification. The idea is simply to create a projection matrix
+    P of shape (N, C) where N is the embedding dimension, and C is the number of classes.
+    P contains in each column the clip text embedding for each possible class, hence multiplying
+    a text embedding by P will give a vector of shape (C,) that can be used to classify the image,
+    since it entails the similarity between the text and the class (softmax will be applied).    
 
     model:
         CLIP-like model with `encode_text`
@@ -57,8 +60,8 @@ def zero_shot_classifier(model, tokenizer, classnames, templates,
     Returns
     -------
     
-    torch.Tensor of shape (N,C) where N is the number
-    of templates, and C is the number of classes.
+    torch.Tensor of shape (N,C) where N is the embedding dimension,
+    and C is the number of classes.
     """
     autocast = torch.cuda.amp.autocast
     with torch.no_grad(), autocast():
