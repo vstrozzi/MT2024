@@ -93,8 +93,10 @@ def svd_data_approx(data, text_features, texts, iters, rank, device):
         results: List of text descriptions with maximum variance.
     """
 
-    # Svd of attention head matrix
-    u, s, vh = np.linalg.svd(data, full_matrices=False)
+    # Svd of attention head matrix (mean centered)
+    mean_values = np.mean(data, axis=0)
+    # Subtract the mean from each column
+    u, s, vh = np.linalg.svd(data - mean_values, full_matrices=False)
     vh = vh[:iters]
 
     # Get the projection of text embeddings into head activations matrix space
@@ -102,11 +104,11 @@ def svd_data_approx(data, text_features, texts, iters, rank, device):
 
     # Return the closest text_features in eigen space of data matrix of top iters eigenvector
     simil_matrix = vh @ text_features.T # Nxd * dxM, cos similarity on each row
-
     # Retrieve texts depending on the index
     indexes = np.squeeze(simil_matrix.argmax(axis=-1).astype(int)).tolist()
     indexes = np.array([indexes]) if isinstance(indexes, int) else indexes
     data = data.astype(float)
+
     # Total strength eigenvectors
     tot_str = np.sum(s)
     results = [texts[idx] + ", with " + str(s[i]) + " on " + str(tot_str) + " (" + str(100 * s[i] / tot_str) + ")" for i, idx in enumerate(indexes)]    # Reconstruct original matrix with new basis
