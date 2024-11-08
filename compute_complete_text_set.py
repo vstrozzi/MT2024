@@ -11,6 +11,7 @@ import tqdm
 import argparse
 from torchvision.datasets import ImageNet
 from pathlib import Path
+from torch.nn import functional as F
 
 from utils.misc import accuracy
 
@@ -41,8 +42,6 @@ def text_span(data, text_features, texts, iters, rank, device):
     # Get the projection of text embeddings into head activations matrix space
     text_features = (vh.T @ vh @ text_features.T).T
 
-        
-    # Mean center the data matrix
     data = torch.from_numpy(data).float().to(device)
     reconstruct = np.zeros_like(data)
     text_features = torch.from_numpy(text_features).float().to(device)
@@ -94,16 +93,17 @@ def svd_data_approx(data, text_features, texts, iters, rank, device):
     """
 
     # Svd of attention head matrix (mean centered)
-    mean_values = np.mean(data, axis=0)
+    mean_values_att = np.mean(data, axis=0)
+    text_features = text_features - np.mean(text_features, axis=0)
     # Subtract the mean from each column
-    u, s, vh = np.linalg.svd(data - mean_values, full_matrices=False)
+    u, s, vh = np.linalg.svd(data - mean_values_att, full_matrices=False)
     vh = vh[:iters]
 
     # Get the projection of text embeddings into head activations matrix space
-    text_features = (vh.T @ vh @ text_features.T).T
+    text_features = text_features @ vh.T @ vh
 
     # Return the closest text_features in eigen space of data matrix of top iters eigenvector
-    simil_matrix = vh @ text_features.T # Nxd * dxM, cos similarity on each row
+    simil_matrix = (vh @ text_features.T)/ np.linalg.norm(text_features, axis=-1)[:, np.newaxis].T # Nxd * dxM, cos similarity on each row
     # Retrieve texts depending on the index
     indexes = np.squeeze(simil_matrix.argmax(axis=-1).astype(int)).tolist()
     indexes = np.array([indexes]) if isinstance(indexes, int) else indexes
@@ -113,10 +113,67 @@ def svd_data_approx(data, text_features, texts, iters, rank, device):
     tot_str = np.sum(s)
     results = [texts[idx] + ", with " + str(s[i]) + " on " + str(tot_str) + " (" + str(100 * s[i] / tot_str) + ")" for i, idx in enumerate(indexes)]    # Reconstruct original matrix with new basis
     reconstruct = np.zeros_like(data)
-    # Project data matrix back and forth
+
     project_matrix = text_features[indexes, :]
-    pseudo_inverse = np.linalg.pinv(project_matrix)
-    reconstruct = (data @ project_matrix.T) @ pseudo_inverse.T
+    # Rank K approximation of the data matrix
+    #for feat in range(project_matrix.shape[0]):
+
+    #    text_norm = project_matrix[feat] @ project_matrix[feat].T
+    #    reconstruct += (data @ project_matrix[feat])[:, np.newaxis] * project_matrix[feat][np.newaxis, :] / (text_norm)**2
+    reconstruct = ((data @ project_matrix.T) / np.square((np.linalg.norm(project_matrix, axis=-1)[:, np.newaxis].T)) \
+                    @ project_matrix) # (dot product with text_features) dot text_features
+
+    return reconstruct, results 
+
+@torch.no_grad()
+def splice_data_approx(data, text_features, texts, iters, rank, device):
+    """
+    This function performs splice of the attention head matrix
+    using the provided text features.
+
+    Args:
+        data: The attention head matrix.
+        text_features: The text features matrix (clip embedding).
+        texts: Original text descriptions.
+        iters: Number of iterations to perform.
+        rank: The rank of the approximation matrix (i.e. # of text_features to preserve).
+        device: The device to perform computations on.
+
+    Returns:
+        reconstruct: The reconstructed attention head matrix.
+        results: List of text descriptions with maximum variance.
+    """
+
+    # Svd of attention head matrix (mean centered)
+    mean_values_att = np.mean(data, axis=0)
+    text_features = text_features - np.mean(text_features, axis=0)
+    # Subtract the mean from each column
+    u, s, vh = np.linalg.svd(data - mean_values_att, full_matrices=False)
+    vh = vh[:iters]
+
+    # Get the projection of text embeddings into head activations matrix space
+    text_features = text_features @ vh.T @ vh
+
+    # Return the closest text_features in eigen space of data matrix of top iters eigenvector
+    simil_matrix = (vh @ text_features.T)/ np.linalg.norm(text_features, axis=-1)[:, np.newaxis].T # Nxd * dxM, cos similarity on each row
+    # Retrieve texts depending on the index
+    indexes = np.squeeze(simil_matrix.argmax(axis=-1).astype(int)).tolist()
+    indexes = np.array([indexes]) if isinstance(indexes, int) else indexes
+    data = data.astype(float)
+
+    # Total strength eigenvectors
+    tot_str = np.sum(s)
+    results = [texts[idx] + ", with " + str(s[i]) + " on " + str(tot_str) + " (" + str(100 * s[i] / tot_str) + ")" for i, idx in enumerate(indexes)]    # Reconstruct original matrix with new basis
+    reconstruct = np.zeros_like(data)
+
+    project_matrix = text_features[indexes, :]
+    # Rank K approximation of the data matrix
+    #for feat in range(project_matrix.shape[0]):
+
+    #    text_norm = project_matrix[feat] @ project_matrix[feat].T
+    #    reconstruct += (data @ project_matrix[feat])[:, np.newaxis] * project_matrix[feat][np.newaxis, :] / (text_norm)**2
+    reconstruct = ((data @ project_matrix.T) / np.square((np.linalg.norm(project_matrix, axis=-1)[:, np.newaxis].T)) \
+                    @ project_matrix) # (dot product with text_features) dot text_features
 
     return reconstruct, results 
 
