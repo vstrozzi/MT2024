@@ -6,6 +6,8 @@ import glob
 import sys
 import os
 import einops
+import sympy
+from torch import nn
 from torch.utils.data import DataLoader
 import tqdm
 import argparse
@@ -104,9 +106,31 @@ def svd_data_approx(data, text_features, texts, iters, rank, device):
 
     # Return the closest text_features in eigen space of data matrix of top iters eigenvector
     simil_matrix = (vh @ text_features.T)/ np.linalg.norm(text_features, axis=-1)[:, np.newaxis].T # Nxd * dxM, cos similarity on each row
-    # Retrieve texts depending on the index
-    indexes = np.squeeze(simil_matrix.argmax(axis=-1).astype(int)).tolist()
-    indexes = np.array([indexes]) if isinstance(indexes, int) else indexes
+    indexes = np.squeeze(simil_matrix.argmax(axis=-1).astype(int))
+
+    # Replace duplicates texts
+    used_elements, used_indexes = np.unique(indexes, return_index=True)
+    idxs_not_unique = np.setdiff1d(np.arange(len(indexes)), used_indexes)
+    for idx_not_unique in idxs_not_unique:
+        # Get argsort to find indices of max elements in descending order
+        row_argsorted = simil_matrix[idx_not_unique].argsort()[::-1]
+
+        # Find the first argmax that hasn't been used yet
+        for index in row_argsorted:
+            if index not in used_elements:
+                indexes[idx_not_unique] = index
+                used_elements = np.append(used_elements, index)
+                # Replace subsequent duplicates (i.e. give more priority to the first eigenvectors
+                # similarity)
+                used_elements, used_indexes = np.unique(indexes, return_index=True)
+                idxs_not_unique = np.setdiff1d(np.arange(len(indexes)), used_indexes)
+                break
+    
+    used_elements, used_indexes = np.unique(indexes, return_index=True)
+    idxs_not_unique = np.setdiff1d(np.arange(len(indexes)), used_indexes)
+
+
+    # Fix unique texts per eigenvector
     data = data.astype(float)
 
     # Total strength eigenvectors
@@ -115,20 +139,24 @@ def svd_data_approx(data, text_features, texts, iters, rank, device):
     reconstruct = np.zeros_like(data)
 
     project_matrix = text_features[indexes, :]
+
     # Rank K approximation of the data matrix
     #for feat in range(project_matrix.shape[0]):
-
     #    text_norm = project_matrix[feat] @ project_matrix[feat].T
     #    reconstruct += (data @ project_matrix[feat])[:, np.newaxis] * project_matrix[feat][np.newaxis, :] / (text_norm)**2
-    reconstruct = ((data @ project_matrix.T) / np.square((np.linalg.norm(project_matrix, axis=-1)[:, np.newaxis].T)) \
-                    @ project_matrix) # (dot product with text_features) dot text_features
+    # reconstruct = ((data @ project_matrix.T) / np.square((np.linalg.norm(project_matrix, axis=-1)[:, np.newaxis].T)) \
+    #                 @ project_matrix) # (dot product with text_features) dot text_features
 
+    # Least Square (data - A @ project_matrix) = 0 <-> A = data @ project_matrix.T @ (project_matrix @ project_matrix.T)^-1
+    A = data @ project_matrix.T @ np.linalg.pinv(project_matrix @ project_matrix.T)
+    
+
+    reconstruct = A @ project_matrix
     return reconstruct, results 
 
-@torch.no_grad()
 def splice_data_approx(data, text_features, texts, iters, rank, device):
     """
-    This function performs splice of the attention head matrix
+    This function performs SVD-based approximation of the attention head matrix
     using the provided text features.
 
     Args:
@@ -144,39 +172,44 @@ def splice_data_approx(data, text_features, texts, iters, rank, device):
         results: List of text descriptions with maximum variance.
     """
 
-    # Svd of attention head matrix (mean centered)
+    # Fix unique texts per eigenvector
     mean_values_att = np.mean(data, axis=0)
-    text_features = text_features - np.mean(text_features, axis=0)
-    # Subtract the mean from each column
-    u, s, vh = np.linalg.svd(data - mean_values_att, full_matrices=False)
-    vh = vh[:iters]
+    mean_values_text = np.mean(text_features, axis=0)
+    data = torch.from_numpy(data).float().to(device)
+    text_features = torch.from_numpy(text_features).float().to(device)
 
-    # Get the projection of text embeddings into head activations matrix space
-    text_features = text_features @ vh.T @ vh
+    # Start defining the optimization loop
+    A = torch.randn(data.shape[0], text_features.shape[0], requires_grad=True).float().to(device)  # Only one row of parameters
 
-    # Return the closest text_features in eigen space of data matrix of top iters eigenvector
-    simil_matrix = (vh @ text_features.T)/ np.linalg.norm(text_features, axis=-1)[:, np.newaxis].T # Nxd * dxM, cos similarity on each row
-    # Retrieve texts depending on the index
-    indexes = np.squeeze(simil_matrix.argmax(axis=-1).astype(int)).tolist()
-    indexes = np.array([indexes]) if isinstance(indexes, int) else indexes
-    data = data.astype(float)
+    optimizer = torch.optim.Adam([A], lr=0.01)
+    epochs = 500
+    lbd = 0.001
+    # Training loop
+    for epoch in range(epochs):
+        optimizer.zero_grad()  # Clear gradients from previous step
+        # Compute the product A @ E
+        pred = torch.matmul(A, text_features)  # Shape (m, n)
+        # Compute the loss function (mean squared error between pred and data)
+        loss = torch.nn.functional.mse_loss(pred, data)
+        # Compute the regularization row-wise (i.e. induce sparsity on parameters)
+        #loss += lbd * A.norm(dim=-1, p=1).mean()
+        # Backpropagation to compute gradients of loss w.r.t. A
+        loss.backward()
+    
+        # Update A using the optimizer
+        optimizer.step()
 
-    # Total strength eigenvectors
-    tot_str = np.sum(s)
-    results = [texts[idx] + ", with " + str(s[i]) + " on " + str(tot_str) + " (" + str(100 * s[i] / tot_str) + ")" for i, idx in enumerate(indexes)]    # Reconstruct original matrix with new basis
-    reconstruct = np.zeros_like(data)
+        # Print loss every 100 epochs
+        if (epoch + 1) % 10 == 0:
+            print(f"Epoch [{epoch + 1}/{epochs}], Loss: {loss.item():.6f}")
 
-    project_matrix = text_features[indexes, :]
-    # Rank K approximation of the data matrix
-    #for feat in range(project_matrix.shape[0]):
-
-    #    text_norm = project_matrix[feat] @ project_matrix[feat].T
-    #    reconstruct += (data @ project_matrix[feat])[:, np.newaxis] * project_matrix[feat][np.newaxis, :] / (text_norm)**2
-    reconstruct = ((data @ project_matrix.T) / np.square((np.linalg.norm(project_matrix, axis=-1)[:, np.newaxis].T)) \
-                    @ project_matrix) # (dot product with text_features) dot text_features
-
-    return reconstruct, results 
-
+    reconstruct = A.detach().cpu().numpy() @ text_features.detach().cpu().numpy()
+    # Take columns of A with highest std
+    text_features_std = A.std(axis=0).detach().cpu().numpy() 
+    # Take top text embedding with max variance for the data matrix
+    top_n = np.argsort(text_features_std)[::-1][:iters]
+    print(np.sort(text_features_std)[::-1])
+    return reconstruct, np.array(texts)[top_n]
 
 def get_args_parser():
     parser = argparse.ArgumentParser("Completeness part", add_help=False)
@@ -276,7 +309,7 @@ def main(args):
         # Evaluate the accuracy of the model on the given dataset.
         for i in tqdm.trange(attns.shape[1] - args.num_of_last_layers, attns.shape[1]): # for the selected layers
             for head in range(attns.shape[2]): # for each head in the layer
-                results, texts = svd_data_approx(
+                results, texts = splice_data_approx(
                     attns[:, i, head],
                     text_features,
                     lines,
