@@ -391,7 +391,12 @@ def download_pretrained_from_hf(
         cache_dir: Union[str, None] = None,
 ):
     has_hf_hub(True)
-    cached_file = hf_hub_download(model_id, filename, revision=revision, cache_dir=cache_dir)
+    # Use local files if possible to avoid itnernet connection
+    try:
+        cached_file = hf_hub_download(model_id, filename, revision=revision, cache_dir=cache_dir, local_files_only=True)
+        print("Using local files")
+    except Exception as e:
+        cached_file = hf_hub_download(model_id, filename, revision=revision, cache_dir=cache_dir)
     return cached_file
 
 
