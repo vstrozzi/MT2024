@@ -48,6 +48,7 @@ def main(args):
     Calculates the projected residual stream (i.e. head activations) for a whole dataset and
     saves them in the output directory.
     """
+    
     model, _, preprocess = create_model_and_transforms(
         args.model, pretrained=args.pretrained, cache_dir=args.cache_dir
     )

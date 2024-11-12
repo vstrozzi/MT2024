@@ -31,6 +31,8 @@ def get_args_parser():
                         help='path where to save')
     parser.add_argument('--device', default='cuda:0',
                         help='device to use for testing')
+    parser.add_argument("--cache_dir", default=None, help="cache directory for models weight", type=str)
+
     return parser
 
 
@@ -82,7 +84,7 @@ def main(args):
     For a fixed model, evaluate the embeddings of the classes labels in the dataset using
     the CLIP text encoder. Save the embeddings in a numpy file.
     """
-    model, _, preprocess = create_model_and_transforms(args.model, pretrained=args.pretrained)
+    model, _, preprocess = create_model_and_transforms(args.model, pretrained=args.pretrained, cache_dir=args.cache_dir)
     tokenizer = get_tokenizer(args.model)
     model.to(args.device)
     model.eval()

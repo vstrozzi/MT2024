@@ -156,7 +156,7 @@ def svd_data_approx(data, text_features, texts, iters, rank, device):
 
 def splice_data_approx(data, text_features, texts, iters, rank, device):
     """
-    This function performs SVD-based approximation of the attention head matrix
+    This function performs a positive least square approximation of the attention head matrix
     using the provided text features.
 
     Args:
@@ -178,37 +178,62 @@ def splice_data_approx(data, text_features, texts, iters, rank, device):
     data = torch.from_numpy(data).float().to(device)
     text_features = torch.from_numpy(text_features).float().to(device)
 
-    # Start defining the optimization loop
-    A = torch.randn(data.shape[0], text_features.shape[0], requires_grad=True).float().to(device)  # Only one row of parameters
+    # Initialize A with required gradient
+    A = torch.clamp(torch.randn(data.shape[0], text_features.shape[0], requires_grad=True), 0, None).to(device)
+    A = A.clone().detach().requires_grad_(True)
 
+    # Set up optimizer and parameters
     optimizer = torch.optim.Adam([A], lr=0.01)
-    epochs = 500
-    lbd = 0.001
-    # Training loop
+    epochs = 5000
+    lbd = 0.00001
+    patience = 500  # Number of epochs to wait for improvement
+    best_loss = float('inf')
+    patience_counter = 0
+
+    # Training loop with early stopping
     for epoch in range(epochs):
         optimizer.zero_grad()  # Clear gradients from previous step
-        # Compute the product A @ E
-        pred = torch.matmul(A, text_features)  # Shape (m, n)
-        # Compute the loss function (mean squared error between pred and data)
+
+        # Compute the product A @ text_features
+        A_clamp = torch.clamp(A, 0, None)
+        pred = torch.matmul(A, text_features)
+        
+        # Compute the mean squared error loss
         loss = torch.nn.functional.mse_loss(pred, data)
-        # Compute the regularization row-wise (i.e. induce sparsity on parameters)
-        #loss += lbd * A.norm(dim=-1, p=1).mean()
-        # Backpropagation to compute gradients of loss w.r.t. A
+        
+        # Regularization (optional, uncomment if needed)
+        loss += lbd/(epoch + 1) * torch.abs(A.sum(dim=-1)).sum()
+        
+        # Backpropagation
         loss.backward()
-    
+        
         # Update A using the optimizer
         optimizer.step()
-
+        
         # Print loss every 100 epochs
-        if (epoch + 1) % 10 == 0:
+        if (epoch + 1) % 500 == 0:
             print(f"Epoch [{epoch + 1}/{epochs}], Loss: {loss.item():.6f}")
+
+        # Early stopping logic
+        if loss.item() < best_loss:
+            best_loss = loss.item()
+            patience_counter = 0  # Reset patience counter when improvement occurs
+        else:
+            patience_counter += 1  # Increment if no improvement
+
+        # Stop training if patience is exhausted
+        if patience_counter >= patience:
+            print(f"Early stopping at epoch {epoch + 1} with best loss: {best_loss:.6f}")
+            break
+
 
     reconstruct = A.detach().cpu().numpy() @ text_features.detach().cpu().numpy()
     # Take columns of A with highest std
     text_features_std = A.std(axis=0).detach().cpu().numpy() 
     # Take top text embedding with max variance for the data matrix
     top_n = np.argsort(text_features_std)[::-1][:iters]
-    print(np.sort(text_features_std)[::-1])
+    print(top_n)
+    print(np.sort(text_features_std)[::-1][:iters])
     return reconstruct, np.array(texts)[top_n]
 
 def get_args_parser():
