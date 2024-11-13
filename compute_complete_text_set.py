@@ -38,6 +38,9 @@ def text_span(data, text_features, texts, iters, rank, device):
     """
     results = []
     # Svd of attention head matrix
+    text_features = text_features - np.mean(text_features, axis=0)
+    mean_values_att = np.mean(data, axis=0)
+    data = data - mean_values_att
     u, s, vh = np.linalg.svd(data, full_matrices=False)
     vh = vh[:rank]
     # return np.matrix(u[:, :80]) * np.diag(s[:80]) * np.matrix(vh[:80, :]) ,results # TASK: this line to test svd
@@ -73,7 +76,7 @@ def text_span(data, text_features, texts, iters, rank, device):
             * text_features[top_n][np.newaxis, :]
         )
 
-    return reconstruct, results
+    return reconstruct + mean_values_att, results
 
 @torch.no_grad()
 def svd_data_approx(data, text_features, texts, iters, rank, device):
@@ -97,8 +100,9 @@ def svd_data_approx(data, text_features, texts, iters, rank, device):
     # Svd of attention head matrix (mean centered)
     mean_values_att = np.mean(data, axis=0)
     text_features = text_features - np.mean(text_features, axis=0)
+    data = data - mean_values_att
     # Subtract the mean from each column
-    u, s, vh = np.linalg.svd(data - mean_values_att, full_matrices=False)
+    u, s, vh = np.linalg.svd(data, full_matrices=False)
     vh = vh[:iters]
 
     # Get the projection of text embeddings into head activations matrix space
@@ -150,8 +154,7 @@ def svd_data_approx(data, text_features, texts, iters, rank, device):
     # Least Square (data - A @ project_matrix) = 0 <-> A = data @ project_matrix.T @ (project_matrix @ project_matrix.T)^-1
     A = data @ project_matrix.T @ np.linalg.pinv(project_matrix @ project_matrix.T)
     
-
-    reconstruct = A @ project_matrix
+    reconstruct = A @ project_matrix + mean_values_att
     return reconstruct, results 
 
 def splice_data_approx(data, text_features, texts, iters, rank, device):
@@ -175,8 +178,8 @@ def splice_data_approx(data, text_features, texts, iters, rank, device):
     # Fix unique texts per eigenvector
     mean_values_att = np.mean(data, axis=0)
     mean_values_text = np.mean(text_features, axis=0)
-    data = torch.from_numpy(data).float().to(device)
-    text_features = torch.from_numpy(text_features).float().to(device)
+    data = torch.from_numpy(data - mean_values_att).float().to(device)
+    text_features = torch.from_numpy(text_features - mean_values_text).float().to(device)
 
     # Initialize A with required gradient
     A = torch.clamp(torch.randn(data.shape[0], text_features.shape[0], requires_grad=True), 0, None).to(device)
@@ -184,9 +187,9 @@ def splice_data_approx(data, text_features, texts, iters, rank, device):
 
     # Set up optimizer and parameters
     optimizer = torch.optim.Adam([A], lr=0.01)
-    epochs = 5000
-    lbd = 0.00001
-    patience = 500  # Number of epochs to wait for improvement
+    epochs = 400
+    lbd = 0.001
+    patience = 20  # Number of epochs to wait for improvement
     best_loss = float('inf')
     patience_counter = 0
 
@@ -196,13 +199,13 @@ def splice_data_approx(data, text_features, texts, iters, rank, device):
 
         # Compute the product A @ text_features
         A_clamp = torch.clamp(A, 0, None)
-        pred = torch.matmul(A, text_features)
+        pred = torch.matmul(A_clamp, text_features)
         
         # Compute the mean squared error loss
         loss = torch.nn.functional.mse_loss(pred, data)
         
-        # Regularization (optional, uncomment if needed)
-        loss += lbd/(epoch + 1) * torch.abs(A.sum(dim=-1)).sum()
+        # Regularization L1 (optional, uncomment if needed)
+        loss += lbd/(epoch + 1) * torch.abs(A_clamp.sum(dim=-1)).sum()
         
         # Backpropagation
         loss.backward()
@@ -211,7 +214,7 @@ def splice_data_approx(data, text_features, texts, iters, rank, device):
         optimizer.step()
         
         # Print loss every 100 epochs
-        if (epoch + 1) % 500 == 0:
+        if (epoch + 1) % 20 == 0:
             print(f"Epoch [{epoch + 1}/{epochs}], Loss: {loss.item():.6f}")
 
         # Early stopping logic
@@ -228,13 +231,146 @@ def splice_data_approx(data, text_features, texts, iters, rank, device):
 
 
     reconstruct = A.detach().cpu().numpy() @ text_features.detach().cpu().numpy()
-    # Take columns of A with highest std
-    text_features_std = A.std(axis=0).detach().cpu().numpy() 
+
+    # Take columns of A with highest mean
+    text_features_mean = A.mean(axis=0).detach().cpu().numpy() 
     # Take top text embedding with max variance for the data matrix
-    top_n = np.argsort(text_features_std)[::-1][:iters]
-    print(top_n)
-    print(np.sort(text_features_std)[::-1][:iters])
-    return reconstruct, np.array(texts)[top_n]
+    indexes = np.argsort(text_features_mean)[::-1][:iters]
+    text_str = text_features_mean[indexes]
+    tot_str = np.sum(text_str) # Total strength of text embeddings
+    results = [texts[idx] + ", with " + str(text_str[i]) + " on " + str(tot_str) + " (" + str(100 * text_str[i] / tot_str) + ")" for i, idx in enumerate(indexes)]    # Reconstruct original matrix with new basis
+
+    return reconstruct + mean_values_att, results
+
+    
+@torch.no_grad()
+def als_data_approx(data, text_features, texts, iters, rank, device):
+    """
+    This function performs als-based approximation of the attention head matrix
+    using the provided text features. It starts from basis of SVD
+
+    Args:
+        data: The attention head matrix.
+        text_features: The text features matrix (clip embedding).
+        texts: Original text descriptions.
+        iters: Number of iterations to perform.
+        rank: The rank of the approximation matrix (i.e. # of text_features to preserve).
+        device: The device to perform computations on.
+
+    Returns:
+        reconstruct: The reconstructed attention head matrix.
+        results: List of text descriptions with maximum variance.
+    """
+
+    # Svd of attention head matrix (mean centered)
+    mean_values_att = np.mean(data, axis=0)
+    text_features = text_features - np.mean(text_features, axis=0)
+    data = data - mean_values_att
+    # Subtract the mean from each column
+    _, s, vh = np.linalg.svd(data, full_matrices=False)
+    vh = vh[:iters]
+
+    # Find closest unique text embedding to a given matrix U (assumed not normalized) using cosing similarity
+    def project_V(V, text_features):
+        # Return the closest text_features in eigen space of data matrix of top iters eigenvector
+        simil_matrix = (V / np.linalg.norm(V, axis=-1)[:, np.newaxis])  @ \
+                        (text_features.T / np.linalg.norm(text_features, axis=-1)[:, np.newaxis].T)# Nxd * dxM, cos similarity on each row
+        indexes = np.squeeze(simil_matrix.argmax(axis=-1).astype(int))
+
+        # Replace duplicates texts
+        used_elements, used_indexes = np.unique(indexes, return_index=True)
+        idxs_not_unique = np.setdiff1d(np.arange(len(indexes)), used_indexes)
+        for idx_not_unique in idxs_not_unique:
+            # Get argsort to find indices of max elements in descending order
+            row_argsorted = simil_matrix[idx_not_unique].argsort()[::-1]
+
+            # Find the first argmax that hasn't been used yet
+            for index in row_argsorted:
+                if index not in used_elements:
+                    indexes[idx_not_unique] = index
+                    used_elements = np.append(used_elements, index)
+                    # Replace subsequent duplicates (i.e. give more priority to the first eigenvectors
+                    # similarity)
+                    used_elements, used_indexes = np.unique(indexes, return_index=True)
+                    idxs_not_unique = np.setdiff1d(np.arange(len(indexes)), used_indexes)
+                    break
+        
+        used_elements, used_indexes = np.unique(indexes, return_index=True)
+        idxs_not_unique = np.setdiff1d(np.arange(len(indexes)), used_indexes)
+
+        return text_features[indexes, :], indexes
+
+    # Get the projection of text embeddings into head activations matrix space
+    text_features = text_features @ vh.T @ vh
+    project_matrix, indexes = project_V(vh, text_features)
+
+    print("Starting ALS")
+    ## ALS ##
+    lmbda = 0.0001 # Regularisation weight to make matris
+    n_epochs = 100 # Number of epochs
+    thr = 50
+    n_iters_U = 10 # Every some iterations clip U
+    n_iters_V = 20 # Every some iterations project V to closest text embedding
+    U = np.clip(data @ project_matrix.T, 0 , None) # Initial guess for U N X K add max value as highest eigenvalue
+    V = project_matrix.T  # Initial guess is to use closest text to eigenvectors D X K
+    # One step of als
+    def als_step(target, solve_vecs, fixed_vecs, lmbda):
+        """
+        when updating the user matrix,
+        the item matrix is the fixed vector and vice versa
+        """
+        A = fixed_vecs.T @ fixed_vecs + np.eye(iters) * lmbda
+        b = target @ fixed_vecs
+        A_inv = np.linalg.inv(A)
+        solve_vecs = b @ A_inv
+        return solve_vecs
+    
+    # Calculate the RMSE
+    def rmse(data ,U,V):
+        return np.sqrt(np.sum((data - U @ V.T)**2))
+
+    # Uset different train and test errors arrays so I can plot both versions later
+    train_errors_fast = []
+
+    # Repeat until convergence
+    for epoch in range(n_epochs):
+
+        if epoch + thr > n_epochs: # If last epochs always keep V fixed on a projection
+            # Fix V and estimate U
+            U = als_step(data, U, V, lmbda=lmbda)
+            U = np.clip(U, 0 , None) 
+            print("Fixing V")
+            # Fix U and estimate V
+            V = als_step(data.T, V, U, lmbda=0.001*lmbda)  
+            V_T, indexes = project_V(V.T, text_features)
+            V = V_T.T
+        else:
+            U = als_step(data, U, V, lmbda=lmbda)
+            V = als_step(data.T, V, U, lmbda=0.001*lmbda)
+            if (n_epochs + 1) % n_iters_U == 0:
+                U = np.clip(U, 0 , None) # Force U to be positive with max value as highest eigenvalue
+            # Project V to closest text embedding
+            if (epoch + 1) % n_iters_V == 0:
+                print("Projecting V")
+                V_T, indexes = project_V(V.T, text_features)
+                V = V_T.T
+
+        # Error
+        train_rmse = rmse(data, U, V)
+        train_errors_fast.append(train_rmse)
+
+        print("[Epoch %d/%d] train error: %f" %(epoch+1, n_epochs, train_rmse))
+        
+    reconstruct = U @ V.T + mean_values_att
+
+    # Get total strength of text embedding basis as an average
+    text_str = np.mean(U,axis=0) # Strength of a text embedding across its contributions
+    tot_str = np.sum(text_str) # Total strength of text embeddings
+    sort = np.argsort(text_str)[::-1]
+    text_str = text_str[sort]
+    indexes = indexes[sort]
+    results = [texts[idx] + ", with " + str(text_str[i]) + " on " + str(tot_str) + " (" + str(100 * text_str[i] / tot_str) + ")" for i, idx in enumerate(indexes)]    # Reconstruct original matrix with new basis
+    return reconstruct, results 
 
 def get_args_parser():
     parser = argparse.ArgumentParser("Completeness part", add_help=False)

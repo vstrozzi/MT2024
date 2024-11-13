@@ -107,7 +107,7 @@ def top_k_contributions(head_texts, k, attns, topic_embedding, model, tokenizer,
     # Normalize embeddings
     texts_embeddings = F.normalize(texts_embeddings, dim=-1).cpu().detach().numpy()
     topic_embedding = topic_embedding.cpu().detach().numpy()
-    # NLP
+    # Non linear programming
     constraint = {"type": "eq", "fun": lambda x: np.sum(x) - k}
     bounds = [(0, 1) for _ in range(texts_embeddings.shape[0])]
     init_guess = np.array([1 if i < k else 0 for i in range(texts_embeddings.shape[0])])
