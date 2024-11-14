@@ -181,6 +181,11 @@ def splice_data_approx(data, text_features, texts, iters, rank, device):
     data = torch.from_numpy(data - mean_values_att).float().to(device)
     text_features = torch.from_numpy(text_features - mean_values_text).float().to(device)
 
+    # Project text_features to data eigenspaces with required rank
+    u , s, vh = np.linalg.svd(data, full_matrices=False)
+    vh = vh[:iters]
+    text_features = text_features @ vh.T @ vh
+
     # Initialize A with required gradient
     A = torch.clamp(torch.randn(data.shape[0], text_features.shape[0], requires_grad=True), 0, None).to(device)
     A = A.clone().detach().requires_grad_(True)
@@ -229,7 +234,7 @@ def splice_data_approx(data, text_features, texts, iters, rank, device):
             print(f"Early stopping at epoch {epoch + 1} with best loss: {best_loss:.6f}")
             break
 
-
+    A = A.clamp_(0, None)
     reconstruct = A.detach().cpu().numpy() @ text_features.detach().cpu().numpy()
 
     # Take columns of A with highest mean
@@ -267,7 +272,7 @@ def als_data_approx(data, text_features, texts, iters, rank, device):
     text_features = text_features - np.mean(text_features, axis=0)
     data = data - mean_values_att
     # Subtract the mean from each column
-    _, s, vh = np.linalg.svd(data, full_matrices=False)
+    u , s, vh = np.linalg.svd(data, full_matrices=False)
     vh = vh[:iters]
 
     # Find closest unique text embedding to a given matrix U (assumed not normalized) using cosing similarity
@@ -306,12 +311,12 @@ def als_data_approx(data, text_features, texts, iters, rank, device):
 
     print("Starting ALS")
     ## ALS ##
-    lmbda = 0.0001 # Regularisation weight to make matris
+    lmbda = 0.5 # Regularisation weight to make matris
     n_epochs = 100 # Number of epochs
-    thr = 50
+    thr = 10
     n_iters_U = 10 # Every some iterations clip U
     n_iters_V = 20 # Every some iterations project V to closest text embedding
-    U = np.clip(data @ project_matrix.T, 0 , None) # Initial guess for U N X K add max value as highest eigenvalue
+    U = np.clip(data @ project_matrix.T @ np.linalg.pinv(project_matrix @ project_matrix.T), 0 , None) # Initial guess for U N X K add max value as highest eigenvalue
     V = project_matrix.T  # Initial guess is to use closest text to eigenvectors D X K
     # One step of als
     def als_step(target, solve_vecs, fixed_vecs, lmbda):
@@ -319,7 +324,7 @@ def als_data_approx(data, text_features, texts, iters, rank, device):
         when updating the user matrix,
         the item matrix is the fixed vector and vice versa
         """
-        A = fixed_vecs.T @ fixed_vecs + np.eye(iters) * lmbda
+        A = fixed_vecs.T @ fixed_vecs + np.diag(np.max(solve_vecs, axis = 0)) * lmbda
         b = target @ fixed_vecs
         A_inv = np.linalg.inv(A)
         solve_vecs = b @ A_inv
@@ -331,10 +336,9 @@ def als_data_approx(data, text_features, texts, iters, rank, device):
 
     # Uset different train and test errors arrays so I can plot both versions later
     train_errors_fast = []
-
     # Repeat until convergence
     for epoch in range(n_epochs):
-
+        
         if epoch + thr > n_epochs: # If last epochs always keep V fixed on a projection
             # Fix V and estimate U
             U = als_step(data, U, V, lmbda=lmbda)
@@ -347,7 +351,8 @@ def als_data_approx(data, text_features, texts, iters, rank, device):
         else:
             U = als_step(data, U, V, lmbda=lmbda)
             V = als_step(data.T, V, U, lmbda=0.001*lmbda)
-            if (n_epochs + 1) % n_iters_U == 0:
+
+            if (epoch + 1) % n_iters_U == 0:
                 U = np.clip(U, 0 , None) # Force U to be positive with max value as highest eigenvalue
             # Project V to closest text embedding
             if (epoch + 1) % n_iters_V == 0:
@@ -470,7 +475,7 @@ def main(args):
         # Evaluate the accuracy of the model on the given dataset.
         for i in tqdm.trange(attns.shape[1] - args.num_of_last_layers, attns.shape[1]): # for the selected layers
             for head in range(attns.shape[2]): # for each head in the layer
-                results, texts = splice_data_approx(
+                results, texts = text_span(
                     attns[:, i, head],
                     text_features,
                     lines,
