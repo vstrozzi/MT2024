@@ -182,47 +182,65 @@ def splice_data_approx(data, text_features, texts, iters, rank, device):
     text_features = torch.from_numpy(text_features - mean_values_text).float().to(device)
 
     # Project text_features to data eigenspaces with required rank
-    u , s, vh = np.linalg.svd(data, full_matrices=False)
-    vh = vh[:iters]
+    u , s, vh = torch.linalg.svd(data, full_matrices=False)
+    vh = vh[:rank]
     text_features = text_features @ vh.T @ vh
 
     # Initialize A with required gradient
-    A = torch.clamp(torch.randn(data.shape[0], text_features.shape[0], requires_grad=True), 0, None).to(device)
+    A = torch.clamp(torch.rand(data.shape[0], text_features.shape[0], requires_grad=True) , 0, None).to(device)
     A = A.clone().detach().requires_grad_(True)
 
     # Set up optimizer and parameters
     optimizer = torch.optim.Adam([A], lr=0.01)
-    epochs = 400
-    lbd = 0.001
-    patience = 20  # Number of epochs to wait for improvement
+    epochs = 1500
+    epoch_thr = 1100
+    lbd_l1 = 0.0000005
+    lbd_max = 0.01
+    # Good value for 20 is 0.0000009
+
+    patience = 1500  # Number of epochs to wait for improvement
     best_loss = float('inf')
     patience_counter = 0
-
+    interv = 5
+    # Range of splitting values to consider
+    steps = np.linspace(iters, A.shape[0], interv)[::-1].astype(int).copy()
+    print(steps)
+    c = 0
     # Training loop with early stopping
     for epoch in range(epochs):
         optimizer.zero_grad()  # Clear gradients from previous step
 
-        # Compute the product A @ text_features
-        A_clamp = torch.clamp(A, 0, None)
-        pred = torch.matmul(A_clamp, text_features)
-        
-        # Compute the mean squared error loss
-        loss = torch.nn.functional.mse_loss(pred, data)
-        
+        # Consider 
+        selected = steps[c]
+        # Compute the product A @ text_features using only stronger iters entries
+        text_features_mean = A.mean(axis=0).detach().cpu().numpy() 
+        indexes = np.argsort(text_features_mean)[::-1][:selected].copy()
+
+        pred = A[:, indexes] @ text_features[indexes, :]
+        # Compute the sqrt mean squared error loss
+        loss_rmse = torch.sqrt(torch.mean((pred-data)**2))
+
         # Regularization L1 on row (i.e. sparse row i.e. few text embeddings)
-        loss += lbd/(epoch + 1) * torch.norm(A_clamp, p=1, dim=1)
-        # Regularization L2 on columns (i.e. dense column i.e. similar values)
-        loss += lbd/(epoch + 1) * torch.norm(A_clamp, p=2, dim=0)
-        
+        loss_l1 = lbd_l1 * torch.norm(A[:, indexes], p=1, dim=1).sum()
+
+        loss = loss_l1 + loss_rmse
         # Backpropagation
         loss.backward()
         
         # Update A using the optimizer
         optimizer.step()
-        
+
+        # Clamp
+        A.data.clamp_(0)
+
         # Print loss every 100 epochs
         if (epoch + 1) % 20 == 0:
             print(f"Epoch [{epoch + 1}/{epochs}], Loss: {loss.item():.6f}")
+
+        # Take the next subset of textes to keep optimizing on
+        if c != len(steps) - 1 and epoch > (c + 1) * epochs//interv:
+            c += 1 
+
 
         # Early stopping logic
         if loss.item() < best_loss:
@@ -236,17 +254,23 @@ def splice_data_approx(data, text_features, texts, iters, rank, device):
             print(f"Early stopping at epoch {epoch + 1} with best loss: {best_loss:.6f}")
             break
 
-    A = A.clamp_(0, None)
-    reconstruct = A.detach().cpu().numpy() @ text_features.detach().cpu().numpy()
-
-    # Take columns of A with highest mean
+    
+    print(data.max())
+    print(pred.max())
+    print(torch.sqrt(torch.nn.functional.mse_loss(pred, data)))
+    # Take columns of A with highest mean (i.e. more active columns -> more active text embedding)
     text_features_mean = A.mean(axis=0).detach().cpu().numpy() 
-    # Take top text embedding with max variance for the data matrix
-    indexes = np.argsort(text_features_mean)[::-1][:iters]
+    indexes = np.argsort(text_features_mean)[::-1][:iters].copy()
+    # Retrieve corresponding text
     text_str = text_features_mean[indexes]
-    tot_str = np.sum(text_str) # Total strength of text embeddings
+    tot_str = np.sum(text_str) # Total strength of text embeddings on that
+    print("We have a value of %f for selected strength" % tot_str)
+    print("We have a total strength of %f for all the columns" % np.sum(text_features_mean))
     results = [texts[idx] + ", with " + str(text_str[i]) + " on " + str(tot_str) + " (" + str(100 * text_str[i] / tot_str) + ")" for i, idx in enumerate(indexes)]    # Reconstruct original matrix with new basis
 
+    # Compute reconstruction using only our selected 
+    A = A.clamp(0, None)
+    reconstruct = A[:, indexes].detach().cpu().numpy() @ text_features[indexes, :].detach().cpu().numpy()
     return reconstruct + mean_values_att, results
 
     
@@ -477,7 +501,7 @@ def main(args):
         # Evaluate the accuracy of the model on the given dataset.
         for i in tqdm.trange(attns.shape[1] - args.num_of_last_layers, attns.shape[1]): # for the selected layers
             for head in range(attns.shape[2]): # for each head in the layer
-                results, texts = text_span(
+                results, texts = splice_data_approx(
                     attns[:, i, head],
                     text_features,
                     lines,
