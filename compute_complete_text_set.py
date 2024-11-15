@@ -194,7 +194,7 @@ def splice_data_approx(data, text_features, texts, iters, rank, device):
     optimizer = torch.optim.Adam([A], lr=0.01)
     epochs = 1500
     epoch_thr = 1100
-    lbd_l1 = 0.0000005
+    lbd_l1 = 0.0003
     lbd_max = 0.01
     # Good value for 20 is 0.0000009
 
@@ -221,7 +221,7 @@ def splice_data_approx(data, text_features, texts, iters, rank, device):
         loss_rmse = torch.sqrt(torch.mean((pred-data)**2))
 
         # Regularization L1 on row (i.e. sparse row i.e. few text embeddings)
-        loss_l1 = lbd_l1 * torch.norm(A[:, indexes], p=1, dim=1).sum()
+        loss_l1 = lbd_l1 * torch.norm(A[:, indexes], p=1, dim=1).mean()
 
         loss = loss_l1 + loss_rmse
         # Backpropagation
