@@ -209,8 +209,10 @@ def splice_data_approx(data, text_features, texts, iters, rank, device):
         # Compute the mean squared error loss
         loss = torch.nn.functional.mse_loss(pred, data)
         
-        # Regularization L1 (optional, uncomment if needed)
-        loss += lbd/(epoch + 1) * torch.abs(A_clamp.sum(dim=-1)).sum()
+        # Regularization L1 on row (i.e. sparse row i.e. few text embeddings)
+        loss += lbd/(epoch + 1) * torch.norm(A_clamp, p=1, dim=1)
+        # Regularization L2 on columns (i.e. dense column i.e. similar values)
+        loss += lbd/(epoch + 1) * torch.norm(A_clamp, p=2, dim=0)
         
         # Backpropagation
         loss.backward()
