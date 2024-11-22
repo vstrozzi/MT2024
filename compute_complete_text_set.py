@@ -130,7 +130,7 @@ def main(args):
         # Evaluate the accuracy of the model on the given dataset.
         for i in tqdm.trange(attns.shape[1] - args.num_of_last_layers, attns.shape[1]): # for the selected layers
             for head in range(attns.shape[2]): # for each head in the layer
-                results, texts, json_info = select_algo(
+                results, texts, json_info = text_span(
                     attns[:, i, head],
                     text_features,
                     lines,

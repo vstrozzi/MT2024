@@ -74,7 +74,7 @@ def text_span(data, text_features, texts, iters, rank, device):
             * text_features[top_n][np.newaxis, :]
         )
 
-    return reconstruct + mean_values_att, results
+    return reconstruct + mean_values_att, results, {}
 
 @torch.no_grad()
 def svd_data_approx(data, text_features, texts, iters, rank, device):
@@ -183,49 +183,90 @@ def splice_data_approx(data, text_features, texts, iters, rank, device):
     u , s, vh = torch.linalg.svd(data, full_matrices=False)
     vh = vh[:rank]
     text_features = text_features @ vh.T @ vh
+    # text_features = text_features / torch.linalg.norm(text_features, axis=-1)[:, np.newaxis]
     simil_matrix = (text_features @ text_features.T) # Nxd * dxM, cos similarity on each row
 
     # Initialize A with required gradient
-    A = torch.clamp(torch.rand(data.shape[0], text_features.shape[0], requires_grad=True) , 0, None).to(device)
+    base = data.min().detach().cpu()
+    scale = data.max().detach().cpu()
+    A = torch.clamp(scale*torch.rand(data.shape[0], text_features.shape[0], requires_grad=True) + scale, 0, None).to(device)
     A = A.clone().detach().requires_grad_(True)
 
     # Set up optimizer and parameters
-    optimizer = torch.optim.Adam([A], lr=0.01)
-    epochs = 1500
-    lbd_l1 = 0.005
-
-    patience = 1500  # Number of epochs to wait for improvement
+    optimizer = torch.optim.Adam([A], lr=0.001)
+    epochs = 3000
+    lbd_l1 = 1
+    lbd_l1_orig = lbd_l1
     best_loss = float('inf')
-    patience_counter = 0
-    # Range of splitting values to consider
-    interv = 2
+    # Ratio derived from experimenting (produces a sparser bases but more interpretable)
+    # Derived by knowing that 80 best interpretable basis, approx. 160 best non-negative basis
+    ratio = 1.35 
 
-    steps = [A.shape[0], A.shape[0], A.shape[0], iters] #np.linspace(A.shape[0], iters, interv).astype(int).copy()
-
-    print(steps)
-    c = 0
+    selected = iters
     # Training loop with early stopping
     for epoch in range(epochs):
         optimizer.zero_grad()  # Clear gradients from previous step
 
-        # Consider a subset of the possible text features
-        selected = steps[c]
         # Compute the product A @ text_features using only stronger iters entries with highest std across entries
         text_features_std = A.std(axis=0)
-        #indexes = torch.argsort(text_features_std, descending=True)
-        indexes_selected = torch.argsort(text_features_std, descending=True)[:iters]
+        
+        indexes = torch.argsort(text_features_std, descending=True)[:iters]
 
         # Favour texes which have highest similarity to each others
-        loss_cosine = -simil_matrix[indexes_selected, indexes_selected].mean()
-        pred = A[:, indexes_selected] @ text_features[indexes_selected, :]
+        pred = A[:, indexes] @ text_features[indexes, :]
         # Compute the sqrt mean squared error loss
         loss_rmse = torch.sqrt(torch.mean((pred-data)**2))
 
-        # Regularization L1 on row (i.e. sparse row i.e. few text embeddings)
-        # Only for top used, yielding to anice
-        loss_l1 = lbd_l1 * torch.norm(A[:, indexes_selected], p=1, dim=1).mean()
+        # Regularization L1 on row used for predictions (i.e. sparse row i.e. fewer text embeddings)
+        loss_l1 = lbd_l1 * (torch.norm(A[:, indexes], p=1, dim=1).mean() + \
+                            torch.norm(A[:, indexes], p=float('inf'), dim=0).mean())
 
-        loss = loss_l1 + loss_rmse + loss_cosine
+        # Use a lbd_1 of 1:1 of loss functions
+        if epoch == 0:
+            lbd_l1 = ratio * loss_rmse.detach().clone()/loss_l1.detach().clone()
+            print(lbd_l1)
+            continue
+        loss = loss_l1 + loss_rmse
+        # Backpropagation
+        loss.backward()
+        
+        # Update A using the optimizer
+        optimizer.step()
+
+        # Clip paramteres to keep them positive
+        A.data.clamp_(0)
+
+        # Print loss every 100 epochs
+        if (epoch + 1) % 100 == 0:
+            print(f"Epoch [{epoch + 1}/{epochs}], Loss: {loss.item():.6f}")
+            print(loss_l1)
+            print(loss_rmse)
+    
+    print(data.max())
+    print(pred.max())
+    print(torch.sqrt(torch.nn.functional.mse_loss(pred, data)))
+    # Take columns of A with highest std (i.e. more active columns -> more active text embedding)
+    text_features_std = A.std(axis=0)
+    indexes = torch.argsort(text_features_std, descending=True)[:iters]
+    A = A[:, indexes].detach().clone().requires_grad_(True)
+    text_features = text_features[indexes, :].detach().clone().requires_grad_(True)
+
+    # Second part, finetune over reconstruction loss
+    optimizer = torch.optim.Adam([A], lr=0.001)  # Recreate the optimizer
+    epochs = 500
+    for epoch in range(epochs):
+        optimizer.zero_grad()  # Clear gradients from previous step
+
+        # Favour texes which have highest similarity to each others
+        #loss_cosine = -simil_matrix[indexes_selected, indexes_selected].mean()
+        pred = A @ text_features
+        # Compute the sqrt mean squared error loss
+        loss_rmse = torch.sqrt(torch.mean((pred-data)**2))
+
+        # Regularization L1 on row (i.e. sparse row i.e. fewer text embeddings)
+        # Only for top used, hence
+
+        loss = loss_rmse
         # Backpropagation
         loss.backward()
         
@@ -238,40 +279,21 @@ def splice_data_approx(data, text_features, texts, iters, rank, device):
         # Print loss every 100 epochs
         if (epoch + 1) % 20 == 0:
             print(f"Epoch [{epoch + 1}/{epochs}], Loss: {loss.item():.6f}")
-
-        # Take the next subset of textes to keep optimizing on
-        if c != len(steps) - 1 and epoch > (c + 1) * epochs//interv:
-            c += 1 
-
-
-        # Early stopping logic
-        if loss.item() < best_loss:
-            best_loss = loss.item()
-            patience_counter = 0  # Reset patience counter when improvement occurs
-        else:
-            patience_counter += 1  # Increment if no improvement
-
-        # Stop training if patience is exhausted
-        if patience_counter >= patience:
-            print(f"Early stopping at epoch {epoch + 1} with best loss: {best_loss:.6f}")
-            break
-    
+        
     print(data.max())
     print(pred.max())
     print(torch.sqrt(torch.nn.functional.mse_loss(pred, data)))
-    # Take columns of A with highest std (i.e. more active columns -> more active text embedding)
-    text_features_std = A.std(axis=0).detach().cpu().numpy() 
-    indexes = np.argsort(text_features_std)[::-1][:iters].copy()
+
     # Retrieve corresponding text
-    text_str = text_features_std[indexes]
-    tot_str = np.sum(text_str) # Total strength of text embeddings on that
+    text_str = text_features_std[indexes].cpu()
+    tot_str = torch.sum(text_str).cpu() # Total strength of text embeddings on that
     print("We have a value of %f for selected strength" % tot_str)
-    print("We have a total strength of %f for all the columns" % np.sum(text_features_std))
-    results = [{"text": texts[idx], "strength_abs": text_str[i].astype(float), "strength_rel": (100 * text_str[i] / tot_str).astype(float)} for i, idx in enumerate(indexes)]    # Reconstruct original matrix with new basis
+    print("We have a total strength of %f for all the columns" % torch.sum(text_features_std))
+    results = [{"text": texts[idx], "strength_abs": text_str[i].item(), "strength_rel": (100 * text_str[i] / tot_str).item()} for i, idx in enumerate(indexes)]    # Reconstruct original matrix with new basis
 
     # Compute reconstruction using only our selected 
     A = A.clamp(0, None)
-    reconstruct = A[:, indexes].detach().cpu().numpy() @ text_features[indexes, :].detach().cpu().numpy()
+    reconstruct = A.detach().cpu().numpy() @ text_features.detach().cpu().numpy()
     
     # Json information on the procedure
     json_object = {
@@ -280,7 +302,7 @@ def splice_data_approx(data, text_features, texts, iters, rank, device):
         "project_matrix": vh.tolist(),
         "embeddings_sort": results
     }
-    return reconstruct + mean_values_att, np.array(texts)[indexes], json_object
+    return reconstruct + mean_values_att, np.array(texts)[indexes.cpu()], json_object
 
     
 @torch.no_grad()
