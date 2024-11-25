@@ -76,6 +76,7 @@ def get_args_parser():
         default=20,
         help="The number of text examples per head.",
     )
+    parser.add_argument("--algorithm", default="text_span", help="The algorithm to use")
     parser.add_argument("--device", default="cuda:0", help="device to use for testing")
     return parser
 
@@ -120,17 +121,17 @@ def main(args):
     with open(
         os.path.join(
             args.output_dir,
-            f"{args.dataset}_completeness_{args.text_descriptions}_top_{args.texts_per_head}_heads_{args.model}.jsonl",
+            f"{args.dataset}_completeness_{args.text_descriptions}_top_{args.texts_per_head}_heads_{args.model}_algo_{args.algorithm}.jsonl",
         ),
         "w",
     ) as jsonl_file:
         # Used algorithm
-        select_algo = splice_data_approx
+        select_algo = globals()[args.algorithm]
         # Compute text span per head and approximate its output by projecting each activation to the span of its text.
         # Evaluate the accuracy of the model on the given dataset.
         for i in tqdm.trange(attns.shape[1] - args.num_of_last_layers, attns.shape[1]): # for the selected layers
             for head in range(attns.shape[2]): # for each head in the layer
-                results, texts, json_info = text_span(
+                results, json_info = select_algo(
                     attns[:, i, head],
                     text_features,
                     lines,
@@ -140,7 +141,7 @@ def main(args):
                 )
                 # Use the final reconstructed attention head matrix
                 attns[:, i, head] = results
-                all_texts |= set(texts)
+                all_texts |= set([text["text"] for text in json_info["embeddings_sort"]])
 
                 # Json of our data
                 json_object = {
@@ -154,7 +155,7 @@ def main(args):
         # Get total contribution of the model
         mean_ablated_and_replaced = mlps.sum(axis=1) + attns.sum(axis=(1, 2))
         # Compute another iteration of the selected algorithm for the final output
-        _, texts, json_info = select_algo(
+        _, json_info = select_algo(
                     mean_ablated_and_replaced,
                     text_features,
                     lines,
