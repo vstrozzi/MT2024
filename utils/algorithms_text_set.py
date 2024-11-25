@@ -36,8 +36,9 @@ def text_span(data, text_features, texts, iters, rank, device):
     """
     results = []
     # Svd of attention head matrix
-    text_features = text_features - np.mean(text_features, axis=0)
     mean_values_att = np.mean(data, axis=0)
+    mean_values_text = np.mean(text_features, axis=0)
+    text_features = text_features - mean_values_text
     data = data - mean_values_att
     u, s, vh = np.linalg.svd(data, full_matrices=False)
     vh = vh[:rank]
@@ -74,7 +75,16 @@ def text_span(data, text_features, texts, iters, rank, device):
             * text_features[top_n][np.newaxis, :]
         )
 
-    return reconstruct + mean_values_att, results, {}
+    results = [{"text": text} for text in results]    # Reconstruct original matrix with new basis
+
+    # Json information on the procedure
+    json_object = {
+        "mean_values_att": mean_values_att.tolist(),
+        "mean_values_text": mean_values_text.tolist(),
+        "project_matrix": vh.tolist(),
+        "embeddings_sort": results
+    }
+    return reconstruct + mean_values_att, json_object
 
 @torch.no_grad()
 def svd_data_approx(data, text_features, texts, iters, rank, device):
@@ -97,7 +107,8 @@ def svd_data_approx(data, text_features, texts, iters, rank, device):
 
     # Svd of attention head matrix (mean centered)
     mean_values_att = np.mean(data, axis=0)
-    text_features = text_features - np.mean(text_features, axis=0)
+    mean_values_text = np.mean(text_features, axis=0)
+    text_features = text_features - mean_values_text
     data = data - mean_values_att
     # Subtract the mean from each column
     u, s, vh = np.linalg.svd(data, full_matrices=False)
@@ -137,7 +148,6 @@ def svd_data_approx(data, text_features, texts, iters, rank, device):
 
     # Total strength eigenvectors
     tot_str = np.sum(s)
-    results = [texts[idx] + ", with " + str(s[i]) + " on " + str(tot_str) + " (" + str(100 * s[i] / tot_str) + ")" for i, idx in enumerate(indexes)]    # Reconstruct original matrix with new basis
     reconstruct = np.zeros_like(data)
 
     project_matrix = text_features[indexes, :]
@@ -152,8 +162,18 @@ def svd_data_approx(data, text_features, texts, iters, rank, device):
     # Least Square (data - A @ project_matrix) = 0 <-> A = data @ project_matrix.T @ (project_matrix @ project_matrix.T)^-1
     A = data @ project_matrix.T @ np.linalg.pinv(project_matrix @ project_matrix.T)
     
-    reconstruct = A @ project_matrix + mean_values_att
-    return reconstruct, results 
+    reconstruct = A @ project_matrix
+
+    results = [{"text": texts[idx], "strength_abs": s[i].astype(float), "strength_rel": (100 * s[i] / tot_str.astype(float))} for i, idx in enumerate(indexes)]    # Reconstruct original matrix with new basis
+
+    # Json information on the procedure
+    json_object = {
+        "mean_values_att": mean_values_att.tolist(),
+        "mean_values_text": mean_values_text.tolist(),
+        "project_matrix": vh.tolist(),
+        "embeddings_sort": results
+    }
+    return reconstruct + mean_values_att, json_object
 
 def splice_data_approx(data, text_features, texts, iters, rank, device):
     """
@@ -302,7 +322,7 @@ def splice_data_approx(data, text_features, texts, iters, rank, device):
         "project_matrix": vh.tolist(),
         "embeddings_sort": results
     }
-    return reconstruct + mean_values_att, np.array(texts)[indexes.cpu()], json_object
+    return reconstruct + mean_values_att, json_object
 
     
 @torch.no_grad()
@@ -326,7 +346,8 @@ def als_data_approx(data, text_features, texts, iters, rank, device):
 
     # Svd of attention head matrix (mean centered)
     mean_values_att = np.mean(data, axis=0)
-    text_features = text_features - np.mean(text_features, axis=0)
+    mean_values_text = np.mean(text_features, axis=0)
+    text_features = text_features - mean_values_text
     data = data - mean_values_att
     # Subtract the mean from each column
     u , s, vh = np.linalg.svd(data, full_matrices=False)
@@ -368,8 +389,8 @@ def als_data_approx(data, text_features, texts, iters, rank, device):
 
     print("Starting ALS")
     ## ALS ##
-    lmbda = 0.5 # Regularisation weight to make matris
-    n_epochs = 100 # Number of epochs
+    lmbda = 0.1 # Regularisation weight to make matrix denser
+    n_epochs = 500 # Number of epochs
     thr = 10
     n_iters_U = 10 # Every some iterations clip U
     n_iters_V = 20 # Every some iterations project V to closest text embedding
@@ -423,13 +444,21 @@ def als_data_approx(data, text_features, texts, iters, rank, device):
 
         print("[Epoch %d/%d] train error: %f" %(epoch+1, n_epochs, train_rmse))
         
-    reconstruct = U @ V.T + mean_values_att
+    reconstruct = U @ V.T
 
     # Get total strength of text embedding basis as an average
     text_str = np.mean(U,axis=0) # Strength of a text embedding across its contributions
     tot_str = np.sum(text_str) # Total strength of text embeddings
     sort = np.argsort(text_str)[::-1]
     text_str = text_str[sort]
-    indexes = indexes[sort]
-    results = [texts[idx] + ", with " + str(text_str[i]) + " on " + str(tot_str) + " (" + str(100 * text_str[i] / tot_str) + ")" for i, idx in enumerate(indexes)]    # Reconstruct original matrix with new basis
-    return reconstruct, results 
+    indexes = indexes[sort]    
+    results = [{"text": texts[idx], "strength_abs": text_str[i].astype(float), "strength_rel": (100 * text_str[i] / tot_str).astype(float)} for i, idx in enumerate(indexes)]    # Reconstruct original matrix with new basis
+
+    # Json information on the procedure
+    json_object = {
+        "mean_values_att": mean_values_att.tolist(),
+        "mean_values_text": mean_values_text.tolist(),
+        "project_matrix": vh.tolist(),
+        "embeddings_sort": results
+    }
+    return reconstruct + mean_values_att, json_object

@@ -37,6 +37,7 @@ def get_args_parser():
     parser.add_argument(
         "--output_dir", default="./output_dir", help="path where to save"
     )
+    parser.add_argument("--seed", default=42, type=int)
     parser.add_argument("--device", default="cuda:0", help="device to use for testing")
     parser.add_argument("--cache_dir", default=None, help="cache directory for models weight", type=str)
     parser.add_argument("--samples_per_class", default=None, help="number of samples per class", type=int)
@@ -87,7 +88,9 @@ def main(args):
         ds = ImageFolder(root=args.data_path, transform=preprocess)
 
     # Get subset datasets on demand:
-    dataloader = dataset_to_dataloader(ds, samples_per_class=args.samples_per_class, tot_samples_per_class=50, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+    dataloader = dataset_to_dataloader(ds, samples_per_class=args.samples_per_class, \
+                                       tot_samples_per_class=50, batch_size=args.batch_size, \
+                                       shuffle=False, num_workers=args.num_workers, seed=args.seed) 
 
     attention_results = []
     mlp_results = []
