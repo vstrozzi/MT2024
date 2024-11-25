@@ -76,6 +76,12 @@ def get_args_parser():
         default=20,
         help="The number of text examples per head.",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="The seed used for the dataset.",
+    )
     parser.add_argument("--algorithm", default="text_span", help="The algorithm to use")
     parser.add_argument("--device", default="cuda:0", help="device to use for testing")
     return parser
@@ -86,11 +92,11 @@ def main(args):
     Evaluate a CLIP representation for a given dataset of text. This is needed to run text_span algorithm.
     """
     with open(
-        os.path.join(args.input_dir, f"{args.dataset}_attn_{args.model}.npy"), "rb"
+        os.path.join(args.input_dir, f"{args.dataset}_attn_{args.model}_seed_{args.seed}.npy"), "rb"
     ) as f:
         attns = np.load(f)  # [b, l, h, d]
     with open(
-        os.path.join(args.input_dir, f"{args.dataset}_mlp_{args.model}.npy"), "rb"
+        os.path.join(args.input_dir, f"{args.dataset}_mlp_{args.model}_seed_{args.seed}.npy"), "rb"
     ) as f:
         mlps = np.load(f)  # [b, l+1, d]
     with open(
@@ -99,7 +105,7 @@ def main(args):
     ) as f:
         classifier = np.load(f)
     
-    labels = np.load(os.path.join(args.input_dir, f"{args.dataset}_labels_{args.model}.npy")) 
+    labels = np.load(os.path.join(args.input_dir, f"{args.dataset}_labels_{args.model}_seed_{args.seed}.npy")) 
 
     print(f"Number of layers: {attns.shape[1]}")
     all_texts = set()
@@ -121,7 +127,7 @@ def main(args):
     with open(
         os.path.join(
             args.output_dir,
-            f"{args.dataset}_completeness_{args.text_descriptions}_top_{args.texts_per_head}_heads_{args.model}_algo_{args.algorithm}.jsonl",
+            f"{args.dataset}_completeness_{args.text_descriptions}_top_{args.texts_per_head}_heads_{args.model}_algo_{args.algorithm}_seed_{args.seed}.jsonl",
         ),
         "w",
     ) as jsonl_file:

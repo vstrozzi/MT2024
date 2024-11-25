@@ -37,7 +37,7 @@ def get_args_parser():
     parser.add_argument(
         "--output_dir", default="./output_dir", help="path where to save"
     )
-    parser.add_argument("--seed", default=42, type=int)
+    parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("--device", default="cuda:0", help="device to use for testing")
     parser.add_argument("--cache_dir", default=None, help="cache directory for models weight", type=str)
     parser.add_argument("--samples_per_class", default=None, help="number of samples per class", type=int)
@@ -114,20 +114,20 @@ def main(args):
             )  # Store the cls->cls attention, reduce the heads
             labels_results.append(labels.cpu().numpy())
     with open(
-        os.path.join(args.output_dir, f"{args.dataset}_attn_{args.model}.npy"), "wb"
+        os.path.join(args.output_dir, f"{args.dataset}_attn_{args.model}_seed_{args.seed}.npy"), "wb"
     ) as f:
         np.save(f, np.concatenate(attention_results, axis=0))
     with open(
-        os.path.join(args.output_dir, f"{args.dataset}_mlp_{args.model}.npy"), "wb"
+        os.path.join(args.output_dir, f"{args.dataset}_mlp_{args.model}_seed_{args.seed}.npy"), "wb"
     ) as f:
         np.save(f, np.concatenate(mlp_results, axis=0))
     with open(
-        os.path.join(args.output_dir, f"{args.dataset}_cls_attn_{args.model}.npy"), "wb"
+        os.path.join(args.output_dir, f"{args.dataset}_cls_attn_{args.model}_seed_{args.seed}.npy"), "wb"
     ) as f:
         np.save(f, np.concatenate(cls_to_cls_results, axis=0))
 
     with open(
-        os.path.join(args.output_dir, f"{args.dataset}_labels_{args.model}.npy"), "wb"
+        os.path.join(args.output_dir, f"{args.dataset}_labels_{args.model}_seed_{args.seed}.npy"), "wb"
     ) as f:
         np.save(f, np.concatenate(labels_results, axis=0))
 
