@@ -20,8 +20,8 @@ from torch.nn.functional import cosine_similarity
 from torch.utils.tensorboard import SummaryWriter
 from utils.initialization_text_set import *
 
-#torch.manual_seed(420)
-#np.random.seed(420)
+torch.manual_seed(420)
+np.random.seed(420)
 
 def splice_data_approx(data, text_features, texts, layer, head, seed, dataset, iters, rank, device):
     """
@@ -42,7 +42,7 @@ def splice_data_approx(data, text_features, texts, layer, head, seed, dataset, i
     """
 
     # Setup Writer
-    writer = SummaryWriter("logs")
+    writer = SummaryWriter("logs_test")
     print(f"\nLayer [{layer}], Head: {head}")
     # Define tag prefixes for this layer, head, and seed
     tag_prefix = f"Dataset_{dataset}/Layer_{layer}/Head_{head}/Seed_{seed}"
@@ -75,10 +75,10 @@ def splice_data_approx(data, text_features, texts, layer, head, seed, dataset, i
     # Initialize A with required gradient and with initial range guess
     strength = strength - strength.min()/(strength.max() - strength.min())
     A = torch.empty(data.shape[0], text_features.shape[0], device=device)
-    A[:, indexes] = 2*data.max()*(strength.unsqueeze(0)*torch.rand(data.shape[0], indexes.shape[0],  device=device))
+    A[:, indexes] = 2*data.max()*(strength.unsqueeze(0)*torch.rand(data.shape[0], indexes.shape[0],  device=device)) + strength.unsqueeze(0)*data.max()
     mask = torch.ones(A.shape[1], dtype=bool, device=device)
     mask[indexes] = False  # Set the specified indexes to False
-    A[:, mask] = 2*data.max()*torch.min(strength)*torch.rand(data.shape[0], mask.shape[0] - torch.unique(indexes).shape[0],  device=device)
+    A[:, mask] = 2*data.max()*torch.min(strength)*torch.rand(data.shape[0], mask.shape[0] - torch.unique(indexes).shape[0],  device=device)  + torch.min(strength)*data.max()
     A_ = A.clone().detach().requires_grad_(True)
 
     # Set up optimizer and parameters
@@ -87,7 +87,7 @@ def splice_data_approx(data, text_features, texts, layer, head, seed, dataset, i
     
     # Initial ratio bewteen regularization and rmse loss 
     lbd_l1 = 1
-    ratio = 1
+    ratio = 0.1
 
     ## First part: main optimization loop
     patience = 500  # Number of epochs to log something
@@ -96,12 +96,11 @@ def splice_data_approx(data, text_features, texts, layer, head, seed, dataset, i
     prev_cum_sum = None
     prev_indexes = torch.tensor([x for x in range(iters)], device=device)
     prev_relative_strength = None
-    stabilization_window = 2000  # Number of iterations to check stability
+    stabilization_window = 500  # Number of iterations to check stability
     cum_sum_stable_count = 0  # Counter for indexes change stability
     relative_strength_stable_count = 0  # Counter for relative strength stability
     stabilization_threshold_cum = int(min(iters, rank)) + 1 # Percentage
     stabilization_threshold_strength = 0.01    
-    tolerance = 1e-9
 
     # Training loop with early stopping
     for epoch in range(epochs_main):
@@ -112,7 +111,7 @@ def splice_data_approx(data, text_features, texts, layer, head, seed, dataset, i
         A = torch.nn.functional.relu(A_)
 
         # Compute the product A @ text_features using only stronger "iters" text with highest std across data
-        text_features_mean = A.mean(axis=0)
+        text_features_mean = A.std(axis=0) + A.mean(axis=0)
         indexes = torch.argsort(text_features_mean, descending=True)[:iters]
         pred = A[:, indexes] @ text_features[indexes, :]
 
@@ -201,7 +200,7 @@ def splice_data_approx(data, text_features, texts, layer, head, seed, dataset, i
 
 
     # Take columns of A with highest mean (i.e. more active columns -> more active text embedding)
-    text_features_mean = A.mean(axis=0)
+    text_features_mean = A.std(axis=0) + A.mean(axis=0)
     indexes = torch.argsort(text_features_mean, descending=True)[:iters]
     A = A[:, indexes].detach().clone().requires_grad_(True)
     text_features = text_features[indexes, :].detach().clone().requires_grad_(True)
