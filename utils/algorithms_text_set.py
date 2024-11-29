@@ -116,7 +116,7 @@ def spih_data_approx(data, text_features, texts, layer, head, seed, dataset, nr_
         optimizer.zero_grad()  # Clear gradients from previous step
 
         # Compute the product A @ text_features using only stronger "nr_basis_elem" text with highest std and mean across data
-        text_features_strength = A.std(axis=0) + A.mean(axis=0)
+        text_features_strength = A.std(axis=0) + 0.1*A.mean(axis=0)
         indexes = torch.argsort(text_features_strength, descending=True)[:nr_basis_elem]
         pred = A[:, indexes] @ text_features[indexes, :]
 
@@ -207,7 +207,7 @@ def spih_data_approx(data, text_features, texts, layer, head, seed, dataset, nr_
 
 
     # Take columns of A with highest mean and std (i.e. more active columns -> more active text embedding)
-    text_features_strength = A.std(axis=0) + A.mean(axis=0)
+    text_features_strength = A.std(axis=0) + 0.1*A.mean(axis=0)
     indexes = torch.argsort(text_features_strength, descending=True)[:nr_basis_elem]
     A = A[:, indexes].detach().clone().requires_grad_(True)
     text_features = text_features[indexes, :].detach().clone().requires_grad_(True)
