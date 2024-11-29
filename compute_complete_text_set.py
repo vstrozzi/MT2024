@@ -146,7 +146,6 @@ def main(args):
                     args.seed,
                     args.text_descriptions,
                     args.texts_per_head,
-                    args.w_ov_rank,
                     args.device,
                 )
                 # Use the final reconstructed attention head matrix
@@ -174,7 +173,6 @@ def main(args):
                     args.seed,
                     args.text_descriptions,
                     args.texts_per_head,
-                    args.w_ov_rank,
                     args.device,
                 )        
         # Get final clip output

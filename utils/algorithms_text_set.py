@@ -23,96 +23,101 @@ from utils.initialization_text_set import *
 torch.manual_seed(420)
 np.random.seed(420)
 
-def splice_data_approx(data, text_features, texts, layer, head, seed, dataset, iters, rank, device):
+def spih_data_approx(data, text_features, texts, layer, head, seed, dataset, nr_basis_elem, device):
     """
-    This function performs a positive least square approximation of the attention head matrix
-    using the provided text features.
+    This function finds a sparse (nr_basis_elem) non-negative approximation of the attention head matrix
+    using the provided text features. (i.e. A @ text_features = data s.t. A > 0  and A sparse)
 
     Args:
         data: The attention head matrix.
         text_features: The text features matrix (clip embedding).
         texts: Original text descriptions.
-        iters: Number of iterations to perform.
-        rank: The rank of the approximation matrix (i.e. # of text_features to preserve).
+        layer: The current layer.
+        head: The current head.
+        seed: The current seed of the text dataset.
+        dataset": The current text dataset used.
+        nr_basis_elem: Number of iterations to perform.
         device: The device to perform computations on.
 
     Returns:
-        reconstruct: The reconstructed attention head matrix.
-        results: List of text descriptions with maximum variance.
+        reconstruct: The reconstructed attention head matrix using the found basis.
+        results: Jsonline file containing the found basis and metadata.
     """
 
-    # Setup Writer
+    # Setup Writer Tensorboard
     writer = SummaryWriter("logs_test")
     print(f"\nLayer [{layer}], Head: {head}")
+
     # Define tag prefixes for this layer, head, and seed
     tag_prefix = f"Dataset_{dataset}/Layer_{layer}/Head_{head}/Seed_{seed}"
     
-    # Center text and image data
+    # Center text and image data (modality gap)
     mean_values_att = np.mean(data, axis=0)
     mean_values_text = np.mean(text_features, axis=0)
     data = torch.from_numpy(data - mean_values_att).float().to(device)
     text_features = torch.from_numpy(text_features - mean_values_text).float().to(device)
 
-    # Project text_features to data lower-rank eigenspace with required rank
+    # Perform SVD of data matrix
+
     u, s, vh = torch.linalg.svd(data, full_matrices=False)
     # Total sum of singular values
     total_variance = torch.sum(s)
     # Cumulative sum of singular values
     cumulative_variance = torch.cumsum(s, dim=0)
-    # Determine rank where cumulative variance exceeds 99% of total variance
-    threshold = 0.99
+    # Determine the rank where cumulative variance exceeds the threshold of total variance
+    threshold = 0.99 # How much variance should cover the top eigenvectors of the matrix 
     rank = torch.sum(cumulative_variance / total_variance < threshold).item() + 1
     vh = vh[:rank]
     s = s[:rank]
 
-    # Prohect features in text space
+    iters = 2*rank
+    # Project text_features to data lower-rank eigenspace (removes redundant informations)
     text_features = text_features @ vh.T @ vh
     text_features = text_features / torch.linalg.norm(text_features, axis=-1)[:, np.newaxis]
 
-    # Get initialization parameters
+    # Get initialization parameters for the coefficient matrix of A
     indexes, strength = svd_parameters_init(vh, s, text_features, rank)
     
     # Initialize A with required gradient and with initial range guess
-    strength = strength - strength.min()/(strength.max() - strength.min())
+    strength = strength - strength.min()/(strength.max() - strength.min()) # min-max normalization
     A = torch.empty(data.shape[0], text_features.shape[0], device=device)
-    A[:, indexes] = 2*data.max()*(strength.unsqueeze(0)*torch.rand(data.shape[0], indexes.shape[0],  device=device)) + strength.unsqueeze(0)*data.max()
+    # Set initialization parameters for text embedding with given strength (same initial std and mean per embedding)
+    A[:, indexes] = data.max()*(strength.unsqueeze(0)*torch.rand(data.shape[0], indexes.shape[0],  device=device)) + data.max()
     mask = torch.ones(A.shape[1], dtype=bool, device=device)
-    mask[indexes] = False  # Set the specified indexes to False
-    A[:, mask] = 2*data.max()*torch.min(strength)*torch.rand(data.shape[0], mask.shape[0] - torch.unique(indexes).shape[0],  device=device)  + torch.min(strength)*data.max()
-    A_ = A.clone().detach().requires_grad_(True)
-
+    mask[indexes] = False 
+    # Set all the other parameters to min strength (same initial std and mean per embedding)
+    A[:, mask] = data.max()*torch.min(strength)*torch.rand(data.shape[0], mask.shape[0] - torch.unique(indexes).shape[0],  device=device) + data.max()
+    A = A.clone().detach().requires_grad_(True)
+    # Clip paramteres to keep them positive
+    A.data.clamp_(0)
     # Set up optimizer and parameters
-    optimizer = torch.optim.Adam([A_], lr=0.001)
-    epochs_main = 7000
+    optimizer = torch.optim.Adam([A], lr=0.001)
+    epochs_main = 5000
     
-    # Initial ratio bewteen regularization and rmse loss 
+    # Initial ratio bewteen regularization l1 and rmse loss 
     lbd_l1 = 1
-    ratio = 0.1
+    ratio = 1
 
     ## First part: main optimization loop
-    patience = 500  # Number of epochs to log something
-
     # Initialize variables for early stopping
     prev_cum_sum = None
-    prev_indexes = torch.tensor([x for x in range(iters)], device=device)
+    prev_indexes = torch.tensor([x for x in range(nr_basis_elem)], device=device)
     prev_relative_strength = None
     stabilization_window = 500  # Number of iterations to check stability
     cum_sum_stable_count = 0  # Counter for indexes change stability
     relative_strength_stable_count = 0  # Counter for relative strength stability
-    stabilization_threshold_cum = int(min(iters, rank)) + 1 # Percentage
+    stabilization_threshold_cum = int(min(nr_basis_elem, rank)) + 1 # Percentage
     stabilization_threshold_strength = 0.01    
+    patience = 500  # Number of epochs to log something
 
     # Training loop with early stopping
     for epoch in range(epochs_main):
         
         optimizer.zero_grad()  # Clear gradients from previous step
 
-        # Clip paramteres to keep them positive
-        A = torch.nn.functional.relu(A_)
-
-        # Compute the product A @ text_features using only stronger "iters" text with highest std across data
-        text_features_mean = A.std(axis=0) + A.mean(axis=0)
-        indexes = torch.argsort(text_features_mean, descending=True)[:iters]
+        # Compute the product A @ text_features using only stronger "nr_basis_elem" text with highest std and mean across data
+        text_features_strength = A.std(axis=0) + A.mean(axis=0)
+        indexes = torch.argsort(text_features_strength, descending=True)[:nr_basis_elem]
         pred = A[:, indexes] @ text_features[indexes, :]
 
         # Compute the sqrt mean squared error loss
@@ -124,7 +129,7 @@ def splice_data_approx(data, text_features, texts, layer, head, seed, dataset, i
 
         loss = loss_l1 + loss_rmse
 
-        # Use a lbd_1 of 1:1 of loss functions
+        # Use a lbd_1 of 1:1 of loss functions (init at first iteration)
         if epoch == 0:
             lbd_l1 = ratio * lbd_l1 * loss_rmse.detach().clone()/loss_l1.detach().clone()
             epoch += 1
@@ -137,9 +142,9 @@ def splice_data_approx(data, text_features, texts, layer, head, seed, dataset, i
         optimizer.step()
 
         # Compute metrics for early stopping
-        text_str = text_features_mean[indexes]
+        text_str = text_features_strength[indexes]
         tot_str = torch.sum(text_str) + 1e-9
-        all_str = torch.sum(text_features_mean) + 1e-9
+        all_str = torch.sum(text_features_strength) + 1e-9
 
         relative_strength = 100 * tot_str / all_str
 
@@ -177,11 +182,13 @@ def splice_data_approx(data, text_features, texts, layer, head, seed, dataset, i
         prev_cum_sum = cum_sum
         prev_indexes = indexes
 
-        
-    # Log text features
-    text_str = text_features_mean[indexes]
+        # Clip paramteres to keep them positive
+        A.data.clamp_(min=0)
+
+    ## Log found text features
+    text_str = text_features_strength[indexes]
     tot_str = torch.sum(text_str)
-    all_str = torch.sum(text_features_mean)   
+    all_str = torch.sum(text_features_strength)   
     results = [
         {
             "text": texts[idx],
@@ -199,9 +206,9 @@ def splice_data_approx(data, text_features, texts, layer, head, seed, dataset, i
     writer.add_text(f"{tag_prefix}/Top-K Strengths for Epoch", markdown_table, epoch)   
 
 
-    # Take columns of A with highest mean (i.e. more active columns -> more active text embedding)
-    text_features_mean = A.std(axis=0) + A.mean(axis=0)
-    indexes = torch.argsort(text_features_mean, descending=True)[:iters]
+    # Take columns of A with highest mean and std (i.e. more active columns -> more active text embedding)
+    text_features_strength = A.std(axis=0) + A.mean(axis=0)
+    indexes = torch.argsort(text_features_strength, descending=True)[:nr_basis_elem]
     A = A[:, indexes].detach().clone().requires_grad_(True)
     text_features = text_features[indexes, :].detach().clone().requires_grad_(True)
 
@@ -210,8 +217,8 @@ def splice_data_approx(data, text_features, texts, layer, head, seed, dataset, i
     patience_counter = 0
     patience = 100  # Number of epochs to wait for improvement
     min_delta = 1e-9  # Minimum improvement in loss to be considered
-    A_ = A.requires_grad_(True) 
-    A_.data.clamp_(0)
+    A = A.requires_grad_(True) 
+    A.data.clamp_(0)
 
     optimizer = torch.optim.Adam([A], lr=0.001)  # Recreate the optimizer
     epochs = 500
@@ -220,9 +227,6 @@ def splice_data_approx(data, text_features, texts, layer, head, seed, dataset, i
     for epoch in range(epochs):
         # Clear gradients from previous step
         optimizer.zero_grad()  
-
-        # Clip paramteres to keep them positive
-        A = torch.nn.functional.relu(A_)
 
         # Make prediction
         pred = A @ text_features
@@ -249,10 +253,13 @@ def splice_data_approx(data, text_features, texts, layer, head, seed, dataset, i
             print(f"Early stopping at epoch {epoch + 1} with best loss_rmse: {best_loss.item():.6f}")
             break
 
+        # Clip paramteres to keep them positive
+        A.data.clamp_(min=0)
+
     # Log second time  
-    text_str = text_features_mean[indexes]
+    text_str = text_features_strength[indexes]
     tot_str = torch.sum(text_str)
-    all_str = torch.sum(text_features_mean)   
+    all_str = torch.sum(text_features_strength)   
     results = [
         {
             "text": texts[idx],
@@ -272,7 +279,7 @@ def splice_data_approx(data, text_features, texts, layer, head, seed, dataset, i
     writer.close()
 
     # Retrieve corresponding text
-    text_str = text_features_mean[indexes].cpu()
+    text_str = text_features_strength[indexes].cpu()
     tot_str = torch.sum(text_str).cpu() # Total strength of text embeddings on that
     results = [{"text": texts[idx], "strength_abs": text_str[i].item(), "strength_rel": (100 * text_str[i] / tot_str).item()} for i, idx in enumerate(indexes)]    # Reconstruct original matrix with new basis
 

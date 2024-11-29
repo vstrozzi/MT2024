@@ -22,11 +22,14 @@ from torch.utils.tensorboard import SummaryWriter
 def svd_parameters_init(vh, s, text_features, rank):
     """
     This function performs SVD-based initialization of the attention head matrix
-    using the provided text features.
+    using the provided text features. It returns the indexes of 2 text features per eigenvector, 
+    which have the highest and lower cosine similarity with the top rank eigenvectors.
+    (i.e. the features which spans in the most similar and opposite direction of the eigenvectors, which
+    can be then used as a non-negative basis)
 
     Args:
-        vh: The top eigenvectors of the data matrix 
-        s: The strength of the eigenvectors
+        vh: The top eigenvectors of the data matrix (D = vh s u)
+        s: The strength of the eigenvectors (D = vh s u)
         text_features: The text features matrix (clip embedding).
         rank: Rank of the data matrix
 
