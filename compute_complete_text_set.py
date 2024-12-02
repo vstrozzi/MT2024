@@ -150,7 +150,8 @@ def main(args):
                 )
                 # Use the final reconstructed attention head matrix
                 attns[:, i, head] = results
-                all_texts |= set([text["text"] for text in json_info["embeddings_sort"]])
+                if json_info != {}:
+                    all_texts |= set([text["text"] for text in json_info["embeddings_sort"]])
 
                 # Json of our data
                 json_object = {

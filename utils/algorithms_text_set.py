@@ -45,7 +45,7 @@ def spih_data_approx(data, text_features, texts, layer, head, seed, dataset, nr_
     """
 
     # Setup Writer Tensorboard
-    writer = SummaryWriter("logs_test")
+    writer = SummaryWriter("logs")
     print(f"\nLayer [{layer}], Head: {head}")
 
     # Define tag prefixes for this layer, head, and seed
@@ -58,8 +58,7 @@ def spih_data_approx(data, text_features, texts, layer, head, seed, dataset, nr_
     text_features = torch.from_numpy(text_features - mean_values_text).float().to(device)
 
     # Perform SVD of data matrix
-
-    u, s, vh = torch.linalg.svd(data, full_matrices=False)
+    u, s, vh = torch.linalg.svd(data, full_matrices=True)
     # Total sum of singular values
     total_variance = torch.sum(s)
     # Cumulative sum of singular values
@@ -67,32 +66,40 @@ def spih_data_approx(data, text_features, texts, layer, head, seed, dataset, nr_
     # Determine the rank where cumulative variance exceeds the threshold of total variance
     threshold = 0.99 # How much variance should cover the top eigenvectors of the matrix 
     rank = torch.sum(cumulative_variance / total_variance < threshold).item() + 1
-    vh = vh[:rank]
+    vh = vh[:rank, :]
     s = s[:rank]
+    u = u[:, :rank]
 
-    iters = 2*rank
+    nr_basis_elem = 2*rank
+    print(nr_basis_elem)
     # Project text_features to data lower-rank eigenspace (removes redundant informations)
     text_features = text_features @ vh.T @ vh
-    text_features = text_features / torch.linalg.norm(text_features, axis=-1)[:, np.newaxis]
-
     # Get initialization parameters for the coefficient matrix of A
-    indexes, strength = svd_parameters_init(vh, s, text_features, rank)
+    # indexes, strength = svd_parameters_init(vh, s, text_features_mem, rank)
     
     # Initialize A with required gradient and with initial range guess
-    strength = strength - strength.min()/(strength.max() - strength.min()) # min-max normalization
-    A = torch.empty(data.shape[0], text_features.shape[0], device=device)
+    # strength = strength - strength.min()/(strength.max() - strength.min()) # min-max normalization
+    # Cosine similarity
+    data_rec = u @ torch.diag_embed(s) @ vh
+    data_rec = data_rec / torch.linalg.norm(data_rec, axis=-1)[:, np.newaxis]
+    # Normalize text features
+    text_features_mem = text_features / torch.linalg.norm(text_features, axis=-1)[:, np.newaxis]
+    sim_matrix_text = text_features_mem @ text_features_mem.T
+    A = data_rec @ text_features_mem.T #torch.empty(data.shape[0], text_features.shape[0], device=device)
+    # Bring back on order of prediction
+    A = 2*torch.max(data, dim=-1).values.unsqueeze(-1)*A
     # Set initialization parameters for text embedding with given strength (same initial std and mean per embedding)
-    A[:, indexes] = data.max()*(strength.unsqueeze(0)*torch.rand(data.shape[0], indexes.shape[0],  device=device)) + data.max()
-    mask = torch.ones(A.shape[1], dtype=bool, device=device)
-    mask[indexes] = False 
+    #A[:, indexes] = data.max()* #(strength.unsqueeze(0)*torch.rand(data.shape[0], indexes.shape[0],  device=device)) + data.max()
+    #mask = torch.ones(A.shape[1], dtype=bool, device=device)
+    #mask[indexes] = False 
     # Set all the other parameters to min strength (same initial std and mean per embedding)
-    A[:, mask] = data.max()*torch.min(strength)*torch.rand(data.shape[0], mask.shape[0] - torch.unique(indexes).shape[0],  device=device) + data.max()
+    #A[:, mask] = data.max()* #strength.min()*torch.rand(data.shape[0], mask.shape[0] - torch.unique(indexes).shape[0],  device=device) + data.max()
     A = A.clone().detach().requires_grad_(True)
     # Clip paramteres to keep them positive
-    A.data.clamp_(0)
+    A.data.clamp_(min=0)
     # Set up optimizer and parameters
     optimizer = torch.optim.Adam([A], lr=0.001)
-    epochs_main = 5000
+    epochs_main = 10000
     
     # Initial ratio bewteen regularization l1 and rmse loss 
     lbd_l1 = 1
@@ -116,7 +123,7 @@ def spih_data_approx(data, text_features, texts, layer, head, seed, dataset, nr_
         optimizer.zero_grad()  # Clear gradients from previous step
 
         # Compute the product A @ text_features using only stronger "nr_basis_elem" text with highest std and mean across data
-        text_features_strength = A.std(axis=0) + 0.1*A.mean(axis=0)
+        text_features_strength = A.mean(axis=0)
         indexes = torch.argsort(text_features_strength, descending=True)[:nr_basis_elem]
         pred = A[:, indexes] @ text_features[indexes, :]
 
@@ -125,7 +132,8 @@ def spih_data_approx(data, text_features, texts, layer, head, seed, dataset, nr_
         # Regularization L1 on row *used* for predictions (i.e. sparse row i.e. fewer text embeddings)
         # and L_inf on *used* for predictions columns
         loss_l1 = ratio * lbd_l1 * (torch.norm(A[:, indexes], p=1, dim=1).mean() + \
-                            torch.norm(A[:, indexes], p=float('inf'), dim=0).mean())
+                            torch.norm(A[:, indexes], p=float('inf'), dim=0).mean() + \
+                            sim_matrix_text[indexes, indexes].mean())
 
         loss = loss_l1 + loss_rmse
 
@@ -165,7 +173,8 @@ def spih_data_approx(data, text_features, texts, layer, head, seed, dataset, nr_
 
         # Check stability for `relative_strength`
         if prev_relative_strength is not None:
-            if relative_strength > 99.9:
+            relative_strength_change = abs(relative_strength - prev_relative_strength)
+            if relative_strength_change > 99.9:
                 relative_strength_stable_count += 1
             else:
                 relative_strength_stable_count = 0  # Reset if not stable
@@ -176,6 +185,10 @@ def spih_data_approx(data, text_features, texts, layer, head, seed, dataset, nr_
                 cum_sum_stable_count += 1
             else:
                 cum_sum_stable_count = 0  # Reset if not stable
+
+        if relative_strength_stable_count > stabilization_window and cum_sum_stable_count > stabilization_window:
+            print(f"Early stopping at epoch {epoch + 1} with best loss_rmse: {best_loss.item():.6f}")
+            break
 
         # Update previous values
         prev_relative_strength = relative_strength
@@ -207,7 +220,7 @@ def spih_data_approx(data, text_features, texts, layer, head, seed, dataset, nr_
 
 
     # Take columns of A with highest mean and std (i.e. more active columns -> more active text embedding)
-    text_features_strength = A.std(axis=0) + 0.1*A.mean(axis=0)
+    text_features_strength = A.mean(axis=0)
     indexes = torch.argsort(text_features_strength, descending=True)[:nr_basis_elem]
     A = A[:, indexes].detach().clone().requires_grad_(True)
     text_features = text_features[indexes, :].detach().clone().requires_grad_(True)
