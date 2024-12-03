@@ -73,14 +73,14 @@ def spih_data_approx(data, text_features, texts, layer, head, seed, dataset, nr_
     nr_basis_elem = 2*rank
     print(nr_basis_elem)
     # Project text_features to data lower-rank eigenspace (removes redundant informations)
-    text_features = text_features @ vh.T @ vh
+    text_features = text_features @ vh.T
     # Get initialization parameters for the coefficient matrix of A
     # indexes, strength = svd_parameters_init(vh, s, text_features_mem, rank)
     
     # Initialize A with required gradient and with initial range guess
     # strength = strength - strength.min()/(strength.max() - strength.min()) # min-max normalization
     # Cosine similarity
-    data_rec = u @ torch.diag_embed(s) @ vh
+    data_rec = u @ torch.diag_embed(s)
     data_rec = data_rec / torch.linalg.norm(data_rec, axis=-1)[:, np.newaxis]
     # Normalize text features
     text_features_mem = text_features / torch.linalg.norm(text_features, axis=-1)[:, np.newaxis]
@@ -128,7 +128,7 @@ def spih_data_approx(data, text_features, texts, layer, head, seed, dataset, nr_
         pred = A[:, indexes] @ text_features[indexes, :]
 
         # Compute the sqrt mean squared error loss
-        loss_rmse = torch.sqrt(torch.mean((pred-data)**2))
+        loss_rmse = torch.sqrt(torch.mean((pred @ vh -data)**2))
         # Regularization L1 on row *used* for predictions (i.e. sparse row i.e. fewer text embeddings)
         # and L_inf on *used* for predictions columns
         loss_l1 = ratio * lbd_l1 * (torch.norm(A[:, indexes], p=1, dim=1).mean() + \
@@ -244,7 +244,7 @@ def spih_data_approx(data, text_features, texts, layer, head, seed, dataset, nr_
         # Make prediction
         pred = A @ text_features
         # Compute the sqrt mean squared error loss
-        loss_rmse = torch.sqrt(torch.mean((pred-data)**2))
+        loss_rmse = torch.sqrt(torch.mean((pred @ vh-data)**2))
         loss = loss_rmse
         # Backpropagation
         loss.backward()
@@ -307,6 +307,6 @@ def spih_data_approx(data, text_features, texts, layer, head, seed, dataset, nr_
         "project_matrix": vh.tolist(),
         "embeddings_sort": results
     }
-    return reconstruct + mean_values_att, json_object
+    return reconstruct @ vh.detach().cpu().numpy() + mean_values_att, json_object
 
     
