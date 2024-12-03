@@ -23,7 +23,7 @@ from utils.initialization_text_set import *
 torch.manual_seed(420)
 np.random.seed(420)
 
-def spih_data_approx(data, text_features, texts, layer, head, seed, dataset, nr_basis_elem, device):
+def spih_data_approx(data, text_features, texts, layer, head, seed, dataset, device):
     """
     This function finds a sparse (nr_basis_elem) non-negative approximation of the attention head matrix
     using the provided text features. (i.e. A @ text_features = data s.t. A > 0  and A sparse)
@@ -36,7 +36,6 @@ def spih_data_approx(data, text_features, texts, layer, head, seed, dataset, nr_
         head: The current head.
         seed: The current seed of the text dataset.
         dataset": The current text dataset used.
-        nr_basis_elem: Number of iterations to perform.
         device: The device to perform computations on.
 
     Returns:

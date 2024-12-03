@@ -126,7 +126,7 @@ def main(args):
     with open(
         os.path.join(
             args.output_dir,
-            f"{args.dataset}_completeness_{args.text_descriptions}_top_{args.texts_per_head}_heads_{args.model}_algo_{args.algorithm}_seed_{args.seed}.jsonl",
+            f"{args.dataset}_completeness_{args.text_descriptions}_{args.model}_algo_{args.algorithm}_seed_{args.seed}.jsonl",
         ),
         "w",
     ) as jsonl_file:
@@ -144,7 +144,6 @@ def main(args):
                     head,
                     args.seed,
                     args.text_descriptions,
-                    args.texts_per_head,
                     args.device,
                 )
                 # Use the final reconstructed attention head matrix
@@ -172,7 +171,6 @@ def main(args):
                     -1,
                     args.seed,
                     args.text_descriptions,
-                    args.texts_per_head,
                     args.device,
                 )        
         # Get final clip output

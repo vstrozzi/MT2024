@@ -215,28 +215,30 @@ def highest_cos_sim_head(data, text_features, texts, layer, head, seed, dataset,
     return reconstruct @ vh + mean_values_att, json_object
 
 
-def svd_data_approx(data, text_features, texts, layer, head, seed, iters, rank, device):
+def svd_data_approx(data, text_features, texts, layer, head, seed, dataset, device):
     print(f"\nLayer [{layer}], Head: {head}")
 
     """
-    This function performs SVD-based approximation of the attention head matrix
-    using the provided text features.
+    This function performs an eigenvectors of the activation matrix
+        closest covariances of the top text embedding.
 
     Args:
         data: The attention head matrix.
         text_features: The text features matrix (clip embedding).
         texts: Original text descriptions.
-        iters: Number of iterations to perform.
-        rank: The rank of the approximation matrix (i.e. # of text_features to preserve).
+        layer: The current layer.
+        head: The current head.
+        seed: The current seed of the text dataset.
+        dataset": The current text dataset used.
         device: The device to perform computations on.
 
     Returns:
-        reconstruct: The reconstructed attention head matrix.
-        results: List of text descriptions with maximum variance.
+        reconstruct: The reconstructed attention head matrix using the found basis.
+        results: Jsonline file containing the found basis and metadata.
     """
 
     # Svd of attention head matrix (mean centered)
-     # Center text and image data (modality gap)
+    # Center text and image data (modality gap)
     mean_values_att = np.mean(data, axis=0)
     mean_values_text = np.mean(text_features, axis=0)
     data = torch.from_numpy(data - mean_values_att).float().to(device)
@@ -257,84 +259,58 @@ def svd_data_approx(data, text_features, texts, layer, head, seed, iters, rank, 
     s = s[:rank]
     u = u[:, :rank]
 
-    nr_basis_elem = rank
-    nr = 5
+    # Use lower rank version of the data matrix
+    data = u @ torch.diag_embed(s)
     # Get the projection of text embeddings into head activations matrix space
-    text_features = text_features @ vh.T @ vh
+    text_features = text_features @ vh.T
     
+    text_per_eigen = 10
     # Return the closest text_features in eigen space of data matrix of top iters eigenvector
-    simil_matrix = (vh @ text_features.T) # Nxd * dxM, cos similarity on each row
-    indexes_max = torch.squeeze(torch.argsort(simil_matrix, dim=-1))[:nr_basis_elem, :nr]
-    indexes_min = torch.squeeze(torch.argsort(simil_matrix, dim=-1, descending=True))[:nr_basis_elem, :nr]
-
-    # Replace duplicates texts
-    """ used_elements_max, used_indexes_max = np.unique(indexes_max, return_index=True)
-    idxs_not_unique_max = np.setdiff1d(np.arange(len(indexes_max)), used_indexes_max)
-    used_elements_min, used_indexes_min = np.unique(indexes_min, return_index=True)
-    idxs_not_unique_min = np.setdiff1d(np.arange(len(indexes_min)), used_indexes_min)
-    
-    for idx_not_unique in idxs_not_unique_max:
-        # Get argsort to find indices of max elements in descending order
-        row_argsorted_desc = simil_matrix[idx_not_unique].argsort()[::-1]
-
-        # Find the first argmax that hasn't been used yet
-        for index in row_argsorted_desc:
-            if index not in used_elements_max:
-                indexes_max[idx_not_unique] = index
-                used_elements_max = np.append(used_elements_max, index)
-                # Replace subsequent duplicates (i.e. give more priority to the first eigenvectors
-                # similarity)
-                used_elements_max, used_indexes_max = np.unique(indexes_max, return_index=True)
-                idxs_not_unique_max = np.setdiff1d(np.arange(len(indexes_max)), used_indexes_max)
-                break
-
-    for idx_not_unique in idxs_not_unique_min:
-        # Get argsort to find indices of max elements in ascending order
-        row_argsorted_asc = simil_matrix[idx_not_unique].argsort()
-        # Find the first argmin that hasn't been used yet
-        for index in row_argsorted_asc:
-            if index not in used_elements_min:
-                indexes_min[idx_not_unique] = index
-                used_elements_min = np.append(used_elements_min, index)
-                # Replace subsequent duplicates (i.e. give more priority to the first eigenvectors
-                # similarity)
-                used_elements_min, used_indexes_min = np.unique(indexes_min, return_index=True)
-                idxs_not_unique_min = np.setdiff1d(np.arange(len(indexes_min)), used_indexes_min)
-                break """
-
+    simil_matrix = (text_features.T) # Nxd * dxM, cos similarity on each row
+    indexes_max = torch.squeeze(torch.argsort(simil_matrix, dim=-1, descending=True))[:rank, :text_per_eigen]
+    indexes_min = torch.squeeze(torch.argsort(simil_matrix, dim=-1))[:rank, :text_per_eigen]
 
     # Total strength eigenvectors
     tot_str = torch.sum(s)
-    reconstruct = torch.zeros_like(data)
 
-    project_matrix = text_features[indexes_min[:, 0], :]
-
-    # Least Square (data - A @ project_matrix) = 0 <-> A = data @ project_matrix.T @ (project_matrix @ project_matrix.T)^-1
-    A = data @ project_matrix.T @ np.linalg.pinv(project_matrix @ project_matrix.T)
-    
-    reconstruct = A @ project_matrix
-    
     # Reconstruct
     results = []
+    indexes_reconstruct = indexes_max[:, 0]
     for i, (idx_max, idx_min) in enumerate(zip(indexes_max, indexes_min)):
-        text = []
-        for k in range(nr):
-            text.append(texts[idx_max[k].item()])
-        for k in range(nr):
-            text.append(texts[idx_min[k].item()])
+        text_pos = []
+        text_neg = []
+        for k in range(text_per_eigen):
+            idx = idx_max[k].item()
+            text_pos.append({f"text_max_{k}":texts[idx], f"corr_max_{k}": simil_matrix[i, idx].item()})
+        for k in range(text_per_eigen):
+            idx = idx_min[k].item()
+            text_neg.append({f"text_min_{k}":texts[idx], f"corr_min_{k}": simil_matrix[i, idx].item()})
+        
+        # Write them in order of the highest correlation (either positive or negative)
+        corr_sign = torch.abs(simil_matrix[i, idx_max[0].item()]) > torch.abs(simil_matrix[i, idx_min[0].item()])
+        text = text_pos + text_neg if corr_sign else text_neg + text_pos
+        # text = sorted(text, key=lambda x: np.abs(list(x.values())[1]), reverse=True)
+        # indexes_reconstruct[i] = idx_min[0] if "min" in list(text[0].keys())[0] else idx_max[0]
+        results.append({"text": text, "eigen_v_emb": vh[i].tolist(), "strength_abs": s[i].item(), "strength_rel": (100 * s[i] / tot_str).item()})   # Reconstruct original matrix with new basis
 
-        results.append({"text": text, "strength_abs": s[i].item(), "strength_rel": (100 * s[i] / tot_str).item()})   # Reconstruct original matrix with new basis
+    reconstruct = torch.zeros_like(data)
 
+    project_matrix = text_features[indexes_reconstruct, :]
 
+    # Least Square (data - A @ project_matrix) = 0 <-> A = data @ project_matrix.T @ (project_matrix @ project_matrix.T)^-1
+    coefficient = project_matrix.T @ np.linalg.pinv(project_matrix @ project_matrix.T) @ project_matrix
+    
+    # Reconstruct the original matrix
+    reconstruct = data @ coefficient @ vh
+    
     # Json information on the procedure
     json_object = {
         "mean_values_att": mean_values_att.tolist(),
         "mean_values_text": mean_values_text.tolist(),
-        "project_matrix": vh.tolist(),
+        "project_matrix": coefficient.tolist(),
+        "vh": vh.tolist(),
         "embeddings_sort": results
     }
 
-    for result in results:
-        print(result)
 
     return reconstruct + mean_values_att, json_object
