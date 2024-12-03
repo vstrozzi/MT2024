@@ -18,8 +18,7 @@ from torch.nn import functional as F
 from utils.misc import accuracy
 
 from utils.algorithms_text_set import * # All the algorithms
-
-
+from utils.algorithms_text_set_det import * # All the algorithms
 def get_args_parser():
     parser = argparse.ArgumentParser("Completeness part", add_help=False)
 
@@ -150,8 +149,8 @@ def main(args):
                 )
                 # Use the final reconstructed attention head matrix
                 attns[:, i, head] = results
-                if json_info != {}:
-                    all_texts |= set([text["text"] for text in json_info["embeddings_sort"]])
+                """ if json_info != {} or isinstance(results, list):
+                    all_texts |= set([text["text"] for text in json_info["embeddings_sort"]]) """
 
                 # Json of our data
                 json_object = {

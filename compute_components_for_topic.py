@@ -13,42 +13,16 @@ from pathlib import Path
 from torch.nn import functional as F
 import einops
 from utils.misc import accuracy
+import json
 
 def read_head_descriptions(head_descriptions, nr_layers, nr_heads_per_layer, texts_per_head):
     text_array = np.empty((nr_layers, nr_heads_per_layer, texts_per_head), dtype=object)
-    # Set counters
-    layer = 0
-    head = -1
-    line_count = 0
-    layer_count = 0
-
-    # Open and read the file
-    for line in head_descriptions.readlines():
-        line = line.strip()
-        # Skip empty lines
-        if line.startswith("------------------"):
-            continue
-        # Stop processing if a line with "Current accuracy" or "Number of texts" is encountered
-        if line.startswith("Current accuracy") or line.startswith("Number of texts"):
-            break
-        # Detect layer and head
-        layer_match = re.match(r'Layer (\d+), Head (\d+)', line)
-        if layer_match:
-            layer = int(layer_match.group(1))
-            head = int(layer_match.group(2))
-            line_count = 0  # Reset line counter for each new head
-            layer_count += 1
-            continue
-        
-        # If it's a data line with text
-        if head >= 0 and layer >= 0:
-            text_match = re.match(r'(.+?),\s*with\s*[\d.]+', line)
-            if text_match:
-                description = text_match.group(1).strip()
-                text_array[layer, head, line_count] = description
-                line_count += 1
-    
-    return text_array
+    embedding_array = np.empty((nr_layers, nr_heads_per_layer, texts_per_head))
+    result = np.array([json.loads(jline) for jline in head_descriptions.read().splitlines()])
+    mean_values_text = result[-1]
+    result = result[:-1]
+    result = einops.rearrange(result, '(l h) -> l h', l=nr_layers, h=nr_heads_per_layer)
+    return result, mean_values_text
 
 def top_k_contributions_naive(head_texts, k, attns, topic_embedding, model, tokenizer, device):
     # Initialize a max heap for top-k similarities
@@ -120,7 +94,6 @@ def top_k_contributions(head_texts, k, attns, topic_embedding, model, tokenizer,
 
     return top_k
 
-
 def get_args_parser():
     parser = argparse.ArgumentParser("Completeness part", add_help=False)
 
@@ -156,13 +129,13 @@ def get_args_parser():
     parser.add_argument(
         "--topic",
         type=str,
-        default="The zoom-up main object in the image.",
+        default="A circular object.",
         help="The topic we want to look at.",
     )
     parser.add_argument(
         "--head_descriptions",
         type=str,
-        default="imagenet_completeness_image_descriptions_general_top_30_heads_ViT-B-32.txt",
+        default="imagenet_completeness_image_descriptions_general_top_30_heads_ViT-B-32.jsonl",
         help="The file containing the text explanations per head.",
     )
 
@@ -195,7 +168,6 @@ def main(args):
     
     head_descriptions = open(os.path.join(args.input_dir, args.head_descriptions), "r")
 
-
     print(f"Number of layers: {attns.shape[1]}")
     # Get the model
     model, _, _ = create_model_and_transforms(args.model, pretrained=args.pretrained)
@@ -203,14 +175,14 @@ def main(args):
     model.to(args.device)
     model.eval()
 
+    # Get the topic per head
+    nr_elements_per_head = int(re.search(r'_top_(\d+)_heads_', args.head_descriptions).group(1))
+    head_texts, info = read_head_descriptions(head_descriptions,  attns.shape[1], attns.shape[2], nr_elements_per_head)
+
     # Evaluate clip embedding for the given topic text
     texts = tokenizer(args.topic).to(args.device)  # tokenize
     topic_embedding = model.encode_text(texts)
     topic_embedding = F.normalize(topic_embedding, dim=-1)
-    
-    # Get the topic per head
-    head_nr = int(re.search(r'_top_(\d+)_heads_', args.head_descriptions).group(1))
-    head_texts = read_head_descriptions(head_descriptions,  attns.shape[1], attns.shape[2], head_nr)
     
     # Get the top k contributions
     top_k_results = top_k_contributions(head_texts, args.nr_components, attns, topic_embedding, model, tokenizer, args.device)
@@ -219,7 +191,7 @@ def main(args):
     with open(
         os.path.join(
             args.output_dir,
-            f"{args.dataset}_with_nr_elem_head_{head_nr}_and_{args.nr_components}_components_for_topic_{args.topic}_model_{args.model}.txt",
+            f"{args.dataset}_with_nr_elem_head_{nr_elements_per_head}_and_{args.nr_components}_components_for_topic_{args.topic}_model_{args.model}.txt",
         ),
         "w",
     ) as w:
