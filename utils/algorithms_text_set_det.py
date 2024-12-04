@@ -266,7 +266,7 @@ def svd_data_approx(data, text_features, texts, layer, head, seed, dataset, devi
     
     text_per_eigen = 10
     # Return the closest text_features in eigen space of data matrix of top iters eigenvector
-    simil_matrix = (text_features.T) # Nxd * dxM, cos similarity on each row
+    simil_matrix = text_features.T # Get the strongest contribution of each text feature to the eigenvectors
     indexes_max = torch.squeeze(torch.argsort(simil_matrix, dim=-1, descending=True))[:rank, :text_per_eigen]
     indexes_min = torch.squeeze(torch.argsort(simil_matrix, dim=-1))[:rank, :text_per_eigen]
 
