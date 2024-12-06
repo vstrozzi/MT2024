@@ -215,7 +215,7 @@ def highest_cos_sim_head(data, text_features, texts, layer, head, seed, dataset,
     return reconstruct @ vh + mean_values_att, json_object
 
 
-def svd_data_approx(data, text_features, texts, layer, head, seed, dataset, device):
+def svd_data_approx(data, text_features, texts, layer, head, text_per_eigenvector, seed, dataset, device):
     print(f"\nLayer [{layer}], Head: {head}")
 
     """
@@ -229,6 +229,7 @@ def svd_data_approx(data, text_features, texts, layer, head, seed, dataset, devi
         layer: The current layer.
         head: The current head.
         seed: The current seed of the text dataset.
+        text_per_eigenvector: Number of texts to consider for each eigenvector.
         dataset": The current text dataset used.
         device: The device to perform computations on.
 
@@ -264,11 +265,10 @@ def svd_data_approx(data, text_features, texts, layer, head, seed, dataset, devi
     # Get the projection of text embeddings into head activations matrix space
     text_features = text_features @ vh.T
     
-    text_per_eigen = 10
     # Return the closest text_features in eigen space of data matrix of top iters eigenvector
     simil_matrix = text_features.T # Get the strongest contribution of each text feature to the eigenvectors
-    indexes_max = torch.squeeze(torch.argsort(simil_matrix, dim=-1, descending=True))[:rank, :text_per_eigen]
-    indexes_min = torch.squeeze(torch.argsort(simil_matrix, dim=-1))[:rank, :text_per_eigen]
+    indexes_max = torch.squeeze(torch.argsort(simil_matrix, dim=-1, descending=True))[:rank, :text_per_eigenvector]
+    indexes_min = torch.squeeze(torch.argsort(simil_matrix, dim=-1))[:rank, :text_per_eigenvector]
 
     # Total strength eigenvectors
     tot_str = torch.sum(s)
@@ -279,10 +279,10 @@ def svd_data_approx(data, text_features, texts, layer, head, seed, dataset, devi
     for i, (idx_max, idx_min) in enumerate(zip(indexes_max, indexes_min)):
         text_pos = []
         text_neg = []
-        for k in range(text_per_eigen):
+        for k in range(text_per_eigenvector):
             idx = idx_max[k].item()
             text_pos.append({f"text_max_{k}":texts[idx], f"corr_max_{k}": simil_matrix[i, idx].item()})
-        for k in range(text_per_eigen):
+        for k in range(text_per_eigenvector):
             idx = idx_min[k].item()
             text_neg.append({f"text_min_{k}":texts[idx], f"corr_min_{k}": simil_matrix[i, idx].item()})
         

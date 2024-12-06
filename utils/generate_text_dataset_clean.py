@@ -1,6 +1,6 @@
 ### Clean file File paths
 input_file = "top_1500_nouns_5_sentences.txt"  # Replace with your input file name
-output_file = "top_1500_nouns_5_sentences_clean.txt"  # Replace with your desired output file name
+output_file = "top_1500_nouns_5_sentences_imagenet_clean.txt"  # Replace with your desired output file name
 
 # Read the input file and remove duplicates
 with open(input_file, "r") as file:

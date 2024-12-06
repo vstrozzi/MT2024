@@ -70,10 +70,10 @@ def get_args_parser():
         "--w_ov_rank", type=int, default=80, help="The rank of the OV matrix"
     )
     parser.add_argument(
-        "--texts_per_head",
+        "--text_per_eigenvector",
         type=int,
-        default=20,
-        help="The number of text examples per head.",
+        default=5,
+        help="The number of text examples per eigenvector.",
     )
     parser.add_argument(
         "--seed",
@@ -81,6 +81,7 @@ def get_args_parser():
         default=0,
         help="The seed used for the dataset.",
     )
+
     parser.add_argument("--algorithm", default="text_span", help="The algorithm to use")
     parser.add_argument("--device", default="cuda:0", help="device to use for testing")
     return parser
@@ -142,6 +143,7 @@ def main(args):
                     lines,
                     i,
                     head,
+                    args.text_per_eigenvector,
                     args.seed,
                     args.text_descriptions,
                     args.device,
@@ -169,6 +171,7 @@ def main(args):
                     lines,
                     -1,
                     -1,
+                    args.text_per_eigenvector,
                     args.seed,
                     args.text_descriptions,
                     args.device,
