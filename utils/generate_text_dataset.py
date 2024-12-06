@@ -2,7 +2,7 @@
 from imagenet_classes import imagenet_classes
 from openai import OpenAI
 
-api_key = "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"
+api_key = ""
 client = OpenAI(
     api_key=api_key,  
 )
@@ -63,9 +63,6 @@ output_file = "top_1500_nouns_5_sentences.txt"
 print(lines)
 with open(output_file, "a") as file:
     for i, class_name in enumerate(lines):
-        print(class_name)
-        if i <= 1064:
-            continue
         try:
             descriptions = generate_descriptions(class_name)
             file.write(f"{descriptions}\n")
