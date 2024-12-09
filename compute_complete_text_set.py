@@ -54,7 +54,7 @@ def get_args_parser():
     parser.add_argument(
         "--text_size",
         type=int,
-        default=3500,
+        default=10000,
         help="The number of texts to consider in total",
     )
     parser.add_argument(
@@ -121,9 +121,7 @@ def main(args):
         text_features = np.load(f)
     with open(os.path.join(args.text_dir, f"{args.text_descriptions}.txt"), "r") as f:
         lines = [i.replace("\n", "") for i in f.readlines()]
-    # Take subset of lines
-    lines = lines[-args.text_size:]
-    text_features = text_features[-args.text_size:]
+    
     with open(
         os.path.join(
             args.output_dir,
