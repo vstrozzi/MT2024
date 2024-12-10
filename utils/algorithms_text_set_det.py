@@ -8,6 +8,8 @@ import sys
 import os
 import einops
 import sympy
+from utils.factory import create_model_and_transforms, get_tokenizer
+
 import json
 import matplotlib.pyplot as plt
 from torch import nn
@@ -15,6 +17,11 @@ from torch.utils.data import DataLoader
 import tqdm
 import argparse
 from torchvision.datasets import ImageNet
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
+
 from pathlib import Path
 from torch.nn import functional as F
 from torch.nn.functional import cosine_similarity
@@ -244,9 +251,7 @@ def svd_data_approx(data, text_features, texts, layer, head, text_per_eigenvecto
     mean_values_text = np.mean(text_features, axis=0)
     data = torch.from_numpy(data - mean_values_att).float().to(device)
     text_features = torch.from_numpy(text_features - mean_values_text).float().to(device)
-    # Subtract the mean from each column
-    u, s, vh = np.linalg.svd(data, full_matrices=False)
-
+   
     # Perform SVD of data matrix
     u, s, vh = torch.linalg.svd(data, full_matrices=True)
     # Total sum of singular values
@@ -261,12 +266,15 @@ def svd_data_approx(data, text_features, texts, layer, head, text_per_eigenvecto
     u = u[:, :rank]
 
     # Use lower rank version of the data matrix
+    data_orig = data
     data = u @ torch.diag_embed(s)
     # Get the projection of text embeddings into head activations matrix space
+    text_features_norm = (text_features.norm(dim=-1, keepdim=True))   
     text_features = text_features @ vh.T
     
     # Return the closest text_features in eigen space of data matrix of top iters eigenvector
-    simil_matrix = text_features.T # Get the strongest contribution of each text feature to the eigenvectors
+
+    simil_matrix = text_features.T / text_features_norm.T  # Get the strongest contribution of each text feature to the eigenvectors
     indexes_max = torch.squeeze(torch.argsort(simil_matrix, dim=-1, descending=True))[:rank, :text_per_eigenvector]
     indexes_min = torch.squeeze(torch.argsort(simil_matrix, dim=-1))[:rank, :text_per_eigenvector]
 
@@ -276,6 +284,7 @@ def svd_data_approx(data, text_features, texts, layer, head, text_per_eigenvecto
     # Reconstruct
     results = []
     indexes_reconstruct = indexes_max[:, 0]
+    cosine_similarity = simil_matrix[:, indexes_max[:, 0]].T
     for i, (idx_max, idx_min) in enumerate(zip(indexes_max, indexes_min)):
         text_pos = []
         text_neg = []
@@ -291,7 +300,8 @@ def svd_data_approx(data, text_features, texts, layer, head, text_per_eigenvecto
         text = text_pos + text_neg if corr_sign else text_neg + text_pos
         # text = sorted(text, key=lambda x: np.abs(list(x.values())[1]), reverse=True)
         # indexes_reconstruct[i] = idx_min[0] if "min" in list(text[0].keys())[0] else idx_max[0]
-        results.append({"text": text, "eigen_v_emb": vh[i].tolist(), "strength_abs": s[i].item(), "strength_rel": (100 * s[i] / tot_str).item()})   # Reconstruct original matrix with new basis
+        results.append({"text": text, "eigen_v_emb": vh[i].tolist(), "strength_abs": s[i].item(), \
+                        "strength_rel": (100 * s[i] / tot_str).item(), "cosine_similarity": cosine_similarity[i, i].item()})   # Reconstruct original matrix with new basis
 
     reconstruct = torch.zeros_like(data)
 
@@ -301,7 +311,7 @@ def svd_data_approx(data, text_features, texts, layer, head, text_per_eigenvecto
     coefficient = project_matrix.T @ np.linalg.pinv(project_matrix @ project_matrix.T) @ project_matrix
     
     # Reconstruct the original matrix
-    reconstruct = data @ coefficient @ vh
+    reconstruct = data_orig @ vh.T @ coefficient @ vh
     
     # Json information on the procedure
     json_object = {
@@ -314,3 +324,4 @@ def svd_data_approx(data, text_features, texts, layer, head, text_per_eigenvecto
 
 
     return reconstruct + mean_values_att, json_object
+
