@@ -16,7 +16,7 @@ from utils.openai_models import load_openai_model
 from utils.pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
     list_pretrained_tags_by_model, download_pretrained_from_hf
 from utils.transform import image_transform, AugmentationCfg
-from utils.tokenizer import HFTokenizer, tokenize
+from utils.tokenizer import HFTokenizer, tokenize, NotHFTokenizer
 
 
 HF_HUB_PREFIX = 'hf-hub:'
@@ -78,7 +78,7 @@ def get_tokenizer(model_name):
     else:
         config = get_model_config(model_name)
         tokenizer = HFTokenizer(
-            config['text_cfg']['hf_tokenizer_name']) if 'hf_tokenizer_name' in config['text_cfg'] else tokenize
+            config['text_cfg']['hf_tokenizer_name']) if 'hf_tokenizer_name' in config['text_cfg'] else NotHFTokenizer()
     return tokenizer
 
 
