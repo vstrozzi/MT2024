@@ -1,3 +1,6 @@
+""" 
+Adapted from https://github.com/yossigandelsman/clip_text_span. MIT License Copyright (c) 2024 Yossi Gandelsman
+"""
 from collections import OrderedDict
 import math
 from typing import Callable, Optional, Sequence, Tuple, Text

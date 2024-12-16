@@ -1,58 +1,68 @@
-## Interpreting CLIP's Image Representation via Text-Based Decomposition
-Official PyTorch Implementation
+# Explaining CLIP's Visual Encoders Heads using Text-Embeddings on Principal Components
+Pythorch implementation, adapted and extended from https://github.com/yossigandelsman/clip_text_span.
 
 
 ![Teaser](images/teaser.png)
 
-### Setup
-We provide an [`environment.yml`](environment.yml) file that can be used to create a Conda environment:
+## General
+Information on how to run and play with our approach.
+### Setup dependencies
+Use the provided [`environment.yml`](environment.yml) file to create a Conda environment with all the dependenctios:
 
 ```bash
 conda env create -f environment.yml
 conda activate MT
 ```
-### Preprocessing
-To obtain the projected residual stream components for the ImageNet validation set, including the contributions from multi-head attentions and MLPs, please run one of the following instructions:
+#### Download Dataset(s)
+Please download the Imagenet dataset from [here](http://calvin-vision.net/bigstuff/proj-imagenet/data/gtsegs_ijcv.mat):
 
 ```bash
-python compute_prs.py --dataset imagenet --device cuda:0 --model ViT-H-14 --pretrained laion2b_s32b_b79k --data_path <PATH>
-python compute_prs.py --dataset imagenet --device cuda:0 --model ViT-L-14 --pretrained laion2b_s32b_b82k --data_path <PATH>
-python compute_prs.py --dataset imagenet --device cuda:0 --model ViT-B-16 --pretrained laion2b_s34b_b88k --data_path <PATH>
-```
-
-To obtain the precomputed text representations of the ImageNet classes, please run:
-```bash
-python compute_text_projection.py  --dataset imagenet --device cuda:0 --model ViT-H-14 --pretrained laion2b_s32b_b79k
-python compute_text_projection.py  --dataset imagenet --device cuda:0 --model ViT-L-14 --pretrained laion2b_s32b_b82k
-python compute_text_projection.py  --dataset imagenet --device cuda:0 --model ViT-B-16 --pretrained laion2b_s34b_b88k
-```
-
-### Mean-ablations
-To verify that the MLPs and the attention from the class token to itself can be mean-ablated, please run:
-
-```bash
-python compute_ablations.py --model ViT-H-14
-python compute_ablations.py --model ViT-L-14
-python compute_ablations.py --model ViT-B-16
-```
-
-### Convert text labels to representation 
-To convert the text labels for <i>TextSpan</i> to CLIP text representations, please run:
-
-```bash
-python compute_text_set_projection.py --device cuda:0 --model ViT-L-14 --pretrained laion2b_s32b_b82k --data_path text_descriptions/google_3498_english.txt
-python compute_text_set_projection.py --device cuda:0 --model ViT-L-14 --pretrained laion2b_s32b_b82k --data_path text_descriptions/image_descriptions_general.txt
-```
-
-### ImageNet segmentation
-Please download the dataset from [here](http://calvin-vision.net/bigstuff/proj-imagenet/data/gtsegs_ijcv.mat):
-
-```bash
+cd datasets
 mkdir imagenet_seg
 cd imagenet_seg
 wget http://calvin-vision.net/bigstuff/proj-imagenet/data/gtsegs_ijcv.mat
 ```
 
+To download the Waterbirds datasets, run:
+```bash
+cd datasets
+wget https://nlp.stanford.edu/data/dro/waterbird_complete95_forest2water2.tar.gz
+tar -xf  waterbird_complete95_forest2water2.tar.gz
+```
+
+### Test
+First run the Notebook prepare_data.ipynb to setup all the necessary data for the experiments.
+Then use the Notebook playground.ipynb to play around with the different approaches.
+
+## Specific
+Explanations on the individual functions used on the Notebooks under General.
+
+### Preprocessing
+To obtain the projected residual stream components for the ImageNet validation set, including the contributions from multi-head attentions and MLPs, please run one of the following instructions:
+
+```bash
+python -m utils.scripts.compute_activation_values --dataset imagenet --device cuda:0 --model ViT-H-14 --pretrained laion2b_s32b_b79k --data_path <PATH>
+python -m utils.scripts.compute_activation_values --dataset imagenet --device cuda:0 --model ViT-L-14 --pretrained laion2b_s32b_b82k --data_path <PATH>
+python -m utils.scripts.compute_activation_values --dataset imagenet --device cuda:0 --model ViT-B-16 --pretrained laion2b_s34b_b88k --data_path <PATH>
+```
+
+To obtain the precomputed text representations of the ImageNet classes, please run:
+```bash
+python -m utils.scripts.compute_classes_embeddings  --dataset imagenet --device cuda:0 --model ViT-H-14 --pretrained laion2b_s32b_b79k
+python -m utils.scripts.compute_classes_embeddings  --dataset imagenet --device cuda:0 --model ViT-L-14 --pretrained laion2b_s32b_b82k
+python -m utils.scripts.compute_classes_embeddings  --dataset imagenet --device cuda:0 --model ViT-B-16 --pretrained laion2b_s34b_b88k
+```
+
+
+### Convert text labels to representation 
+To convert the text labels to CLIP text representations, please run:
+
+```bash
+python -m utils.scripts.compute_text_explanations --device cuda:0 --model ViT-L-14 --pretrained laion2b_s32b_b82k --data_path utils/text_descriptions/google_3498_english.txt
+python -m utils.scripts.compute_text_explanations --device cuda:0 --model ViT-L-14 --pretrained laion2b_s32b_b82k --data_path utils/text_descriptions/top_1500_nouns_5_sentences_imagenet_bias_clean.txt
+```
+
+### ImageNet segmentation
 To get the evaluation results, please run:
 
 ```bash
@@ -62,27 +72,13 @@ python compute_segmentations.py --device cuda:0 --model ViT-B-16 --pretrained la
 ```
 Save the results with the `--save_img` flag.
 
-
 ### TextSpan
 
-To find meaningful directions for all the attenion heads, run:
+Explain the internal components of the CLIP-embeddings ViT-Encoder's for images using with text (ours: svd_data_approx, their: text_span)
 ```bash
-python compute_complete_text_set.py --device cuda:0 --model ViT-B-16 --texts_per_head 20 --num_of_last_layers 4 --text_descriptions image_descriptions_general
-python compute_complete_text_set.py --device cuda:0 --model ViT-L-14 --texts_per_head 20 --num_of_last_layers 4 --text_descriptions image_descriptions_general
-python compute_complete_text_set.py --device cuda:0 --model ViT-H-14 --texts_per_head 20 --num_of_last_layers 4 --text_descriptions image_descriptions_general
-```
-
-### Other datasets
-To download the Waterbirds datasets, run:
-```bash
-wget https://nlp.stanford.edu/data/dro/waterbird_complete95_forest2water2.tar.gz
-tar -xf  waterbird_complete95_forest2water2.tar.gz
-```
-To compute the overall accuracy, run:
-```bash
-python compute_prs.py --dataset binary_waterbirds --device cuda:0 --model ViT-L-14 --pretrained laion2b_s32b_b82k --data_path <PATH>
-python compute_text_projection.py  --dataset binary_waterbirds --device cuda:0 --model ViT-L-14 --pretrained laion2b_s32b_b82k
-python compute_use_specific_heads.py --model ViT-L-14 --dataset binary_waterbirds 
+!python -m utils.scripts.compute_text_explanations --device cpu --model ViT-H-14 --algorithm svd_data_approx --seed 12 --num_of_last_layers 4 --text_descriptions top_1500_nouns_5_sentences_imagenet_bias_clean
+!python -m utils.scripts.compute_text_explanations --device cpu --model ViT-L-14 --algorithm svd_data_approx --seed 12 --num_of_last_layers 4 --text_descriptions top_1500_nouns_5_sentences_imagenet_bias_clean
+!python -m utils.scripts.compute_text_explanations --device cpu --model ViT-B-16--algorithm svd_data_approx --seed 12 --num_of_last_layers 4 --text_descriptions top_1500_nouns_5_sentences_imagenet_bias_clean
 ```
 
 ### Spatial decomposition

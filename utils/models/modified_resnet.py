@@ -1,3 +1,6 @@
+""" 
+Copied from https://github.com/yossigandelsman/clip_text_span. MIT License Copyright (c) 2024 Yossi Gandelsman
+"""
 from collections import OrderedDict
 
 import torch

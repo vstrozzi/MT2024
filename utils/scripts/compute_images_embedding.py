@@ -1,3 +1,7 @@
+
+""" 
+Adapted from https://github.com/yossigandelsman/clip_text_span. MIT License Copyright (c) 2024 Yossi Gandelsman
+"""
 import numpy as np
 import os.path
 import argparse

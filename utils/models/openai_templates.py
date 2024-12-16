@@ -1,4 +1,7 @@
 
+""" 
+Copied from https://github.com/yossigandelsman/clip_text_span. MIT License Copyright (c) 2024 Yossi Gandelsman
+"""
 OPENAI_IMAGENET_TEMPLATES = (
     lambda c: f'a bad photo of a {c}.',
     lambda c: f'a photo of many {c}.',

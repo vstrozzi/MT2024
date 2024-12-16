@@ -1,3 +1,6 @@
+""" 
+Adapted from https://github.com/yossigandelsman/clip_text_span. MIT License Copyright (c) 2024 Yossi Gandelsman
+"""
 import argparse
 import torch
 import numpy as np
@@ -19,7 +22,7 @@ from utils.misc.segmentation_utils import (
     Saver,
 )
 from sklearn.metrics import precision_recall_curve
-from prs_hook import hook_prs_logger
+from utils.models.prs_hook import hook_prs_logger
 
 
 # Args

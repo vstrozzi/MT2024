@@ -1,5 +1,5 @@
-""" timm model adapter
-
+"""
+Copied from https://github.com/yossigandelsman/clip_text_span. MIT License Copyright (c) 2024 Yossi Gandelsman. 
 Wraps timm (https://github.com/rwightman/pytorch-image-models) models for use as a vision tower in CLIP model.
 """
 import logging

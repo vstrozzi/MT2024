@@ -1,3 +1,6 @@
+""" 
+Adapted from https://github.com/yossigandelsman/clip_text_span. MIT License Copyright (c) 2024 Yossi Gandelsman
+"""
 import json
 import logging
 import os

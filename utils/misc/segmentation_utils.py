@@ -1,5 +1,8 @@
+
+""" 
+Adapted from https://github.com/yossigandelsman/clip_text_span. MIT License Copyright (c) 2024 Yossi Gandelsman
+"""
 import torch
-import matplotlib.cm
 import skimage.io
 import skimage.feature
 import skimage.filters

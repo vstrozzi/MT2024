@@ -1,11 +1,12 @@
-import os
+""" 
+Adapted from https://github.com/yossigandelsman/clip_text_span. MIT License Copyright (c) 2024 Yossi Gandelsman
+"""
 import torch
 import torch.utils.data as data
 import numpy as np
 
-from torchvision.datasets import ImageNet
 
-from PIL import Image, ImageFilter
+from PIL import Image
 import h5py
 from glob import glob
 

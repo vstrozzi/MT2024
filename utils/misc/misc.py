@@ -1,3 +1,6 @@
+""" 
+Adapted from https://github.com/yossigandelsman/clip_text_span. MIT License Copyright (c) 2024 Yossi Gandelsman
+"""
 from itertools import repeat
 import collections.abc
 

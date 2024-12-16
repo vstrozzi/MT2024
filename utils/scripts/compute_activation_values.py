@@ -1,3 +1,6 @@
+""" 
+Adapted from https://github.com/yossigandelsman/clip_text_span. MIT License Copyright (c) 2024 Yossi Gandelsman
+"""
 import numpy as np
 import torch
 import os.path
@@ -8,7 +11,7 @@ import tqdm
 from utils.models.factory import create_model_and_transforms
 from utils.datasets.binary_waterbirds import BinaryWaterbirds
 from utils.datasets.dataset_helpers import dataset_to_dataloader
-from prs_hook import hook_prs_logger
+from utils.models.prs_hook import hook_prs_logger
 from torchvision.datasets import CIFAR100, CIFAR10, ImageNet, ImageFolder
 
 

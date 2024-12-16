@@ -1,5 +1,4 @@
-""" CLIP Model
-
+""" 
 Adapted from https://github.com/openai/CLIP. Originally MIT License, Copyright (c) 2021 OpenAI.
 """
 from dataclasses import dataclass
