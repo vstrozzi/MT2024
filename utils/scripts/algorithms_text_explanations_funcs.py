@@ -248,7 +248,7 @@ def reconstruct_embeddings(data, embeddings, types, return_princ_comp=False):
 
             if return_princ_comp:
                 topic_emb_proj_norm = (embeddings[i] / embeddings[i].norm(dim=-1, keepdim=True) @ vh.T) 
-                component["cosine_princ_comp"] = torch.abs(topic_emb_proj_norm[:, princ_comp].squeeze()).item() 
+                component["cosine_princ_comp"] = torch.abs((embeddings[i] @ vh.T)[:, princ_comp].squeeze()).item() 
                 component["correlation_princ_comp"] = (embeddings[i] @ vh.T)[:, princ_comp].squeeze().item() 
 
     return reconstructed_embeddings, data
@@ -277,10 +277,9 @@ def reconstruct_top_embedding(data, embedding, type, max_reconstr_score, top_k=1
             [query_repres_tmp], _ = reconstruct_embeddings([data[count]], [embedding], [type], return_princ_comp=False)
             query_repres += query_repres_tmp
 
-        # Normalize the current reconstructed representation
-        query_repres_norm = query_repres / query_repres.norm(dim=-1, keepdim=True)
+
         # Compute the current score: how well this partial reconstruction matches the original embedding
-        score = embedding @ query_repres_norm.T
+        score = embedding @ query_repres.T
 
         # If we've reached the top_k limit or our reconstruction score is good enough 
         # (relative to max_reconstr_score and meeting the approx threshold), stop adding more components.
