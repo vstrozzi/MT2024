@@ -121,7 +121,7 @@ def main(args):
     ) as jsonl_file:
         # Used algorithm
         select_algo = globals()[args.algorithm]
-        # Compute text span per head and approximate its output by projecting each activation to the span of its text.
+        # Compute algo per head and approximate its output by projecting each activation to the span of its text.
         # Evaluate the accuracy of the model on the given dataset.
         for i in tqdm.trange(attns.shape[1] - args.num_of_last_layers, attns.shape[1]): # for the selected layers
             for head in range(attns.shape[2]): # for each head in the layer

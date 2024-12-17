@@ -6,6 +6,7 @@ torch.manual_seed(420)
 np.random.seed(420)
 
 
+@torch.no_grad()
 def svd_data_approx(data, text_features, texts, layer, head, text_per_princ_comp, device):
     print(f"\nLayer [{layer}], Head: {head}")
 
