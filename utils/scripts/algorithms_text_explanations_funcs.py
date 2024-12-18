@@ -58,6 +58,7 @@ def get_data(attention_dataset, min_princ_comp=-1, skip_final=False):
                     "strength_abs": princ_comp_data["strength_abs"],
                     "strength_rel": princ_comp_data["strength_rel"],
                     "cosine_similarity": princ_comp_data["cosine_similarity"],
+                    "correlation": princ_comp_data["correlation"],
                     "texts": princ_comp_data["text"],
                     "rank": len(entry["embeddings_sort"]),
                     "project_matrix": entry["project_matrix"],
@@ -87,13 +88,13 @@ def get_data_component(data, layer, head, princ_comp):
             return [entry]
 
 @torch.no_grad()
-def print_data(data, min_princ_comp=-1, is_cosine_present=False):
+def print_data(data, min_princ_comp=-1, is_corr_present=False):
     """
     Print the collected data in a formatted table.
     Args:
     - data (list): A list of dictionaries containing details for each principal component of interest. (i.e. layout as PrincipalComponentRecord)
     - min_princ_comp (int): The minimum principal component number to consider for each head (-1=all).
-    - is_cosine_present (bool): Whether the correlation values are present in the data.
+    - is_corr_present (bool): Whether the correlation values are present in the data.
     Returns:
     - None
     """
@@ -129,7 +130,7 @@ def print_data(data, min_princ_comp=-1, is_cosine_present=False):
             neg_val  = list(neg.values())[1]    
             
             # Append not with maximum value but with the according sign of correlation on the left
-            if is_cosine_present:
+            if is_corr_present:
                 corr_sign = np.sign(row.correlation_princ_comp)
                 if corr_sign > 0:
                     output_rows.append([pos_text, pos_val, neg_text, neg_val])
@@ -137,15 +138,17 @@ def print_data(data, min_princ_comp=-1, is_cosine_present=False):
                     output_rows.append([neg_text, neg_val, pos_text, pos_val])
 
             else:
-                output_rows.append([pos_text, pos_val, neg_text, neg_val])
-            
+                if is_positive_first:
+                    output_rows.append([pos_text, pos_val, neg_text, neg_val])
+                else:
+                    output_rows.append([neg_text, neg_val, pos_text, pos_val])            
 
         # Print summary information about the current principal component:
         # Including layer, head, principal component index, absolute variance, relative variance, and head rank.
         print(f"Layer {row.layer}, Head {row.head}, Principal Component {row.princ_comp}, "
             f"Variance {row.strength_abs:.3f}, Relative Variance {row.strength_rel:.3f}, Head Rank {row.rank}")
-        if is_cosine_present:
-            print(f"Cosine of the Topic with the Principal Component {row.cosine_princ_comp * np.sign(row.correlation_princ_comp):.4f}")
+        if is_corr_present:
+            print(f"Correlation of the Topic with the Principal Component {row.correlation_princ_comp:.4f}")
         
         # Set the column headers based on whether the first half was considered positive
         if is_positive_first:
@@ -154,7 +157,7 @@ def print_data(data, min_princ_comp=-1, is_cosine_present=False):
             columns = ["Negative", "Negative_Strength", "Positive", "Positive_Strength"]
 
         # Or set it based on the sign of the correlation
-        if is_cosine_present and corr_sign > 0:
+        if is_corr_present and corr_sign > 0:
             columns = ["Positive", "Positive_Strength", "Negative", "Negative_Strength"]
         else:
             columns = ["Negative", "Negative_Strength", "Positive", "Positive_Strength"]
@@ -247,9 +250,8 @@ def reconstruct_embeddings(data, embeddings, types, return_princ_comp=False):
                 reconstructed_embeddings[i] += mask @ project_matrix @ vh
 
             if return_princ_comp:
-                topic_emb_proj_norm = (embeddings[i] / embeddings[i].norm(dim=-1, keepdim=True) @ vh.T) 
-                component["cosine_princ_comp"] = torch.abs((embeddings[i] @ vh.T)[:, princ_comp].squeeze()).item() 
-                component["correlation_princ_comp"] = (embeddings[i] @ vh.T)[:, princ_comp].squeeze().item() 
+                component["correlation_princ_comp_abs"] = torch.abs(mask[:, princ_comp]).item() 
+                component["correlation_princ_comp"] = mask[:, princ_comp].item()
 
     return reconstructed_embeddings, data
 
@@ -278,8 +280,10 @@ def reconstruct_top_embedding(data, embedding, type, max_reconstr_score, top_k=1
             query_repres += query_repres_tmp
 
 
+        # Compute the current score:
+        query_repres_norm = query_repres / query_repres.norm(dim=-1, keepdim=True)
         # Compute the current score: how well this partial reconstruction matches the original embedding
-        score = embedding @ query_repres.T
+        score = embedding @ query_repres_norm.T
 
         # If we've reached the top_k limit or our reconstruction score is good enough 
         # (relative to max_reconstr_score and meeting the approx threshold), stop adding more components.
@@ -303,7 +307,7 @@ def reconstruct_top_embedding(data, embedding, type, max_reconstr_score, top_k=1
 
     return data[:top_k]
 
-def image_grid(images, rows, cols, labels=None, scores=None, figsize=None):
+def image_grid(images, rows, cols, labels=None, scores=None, scores_vis=None, figsize=None):
     """
     Display a collection of images arranged in a grid with optional labels and scores.
     
@@ -313,6 +317,7 @@ def image_grid(images, rows, cols, labels=None, scores=None, figsize=None):
         - cols (int): Number of columns in the image grid.
         - labels (list, optional): List of labels for each image. Defaults to None.
         - scores (list, optional): List of scores for each image, displayed alongside labels. Defaults to None.
+        - scores_vis (list, optional): List of scores for each image, displayed alongside labels. Defaults to None.
         - figsize (tuple, optional): Size of the figure in inches as (width, height). If not provided, it is calculated based on rows and cols.
     
     Returns:
@@ -330,7 +335,7 @@ def image_grid(images, rows, cols, labels=None, scores=None, figsize=None):
             if labels:
                 title += labels[i]
             if scores:
-                title += f" ({scores[i]:.4f})" if labels else f"{scores[i]:.4f}"
+                title += f" ({scores[i]:.3f}) ({scores_vis[i]:.3f})"
             if title:
                 ax.set_title(title, fontsize=10)
             ax.axis('off')
@@ -400,8 +405,8 @@ def create_dbs(scores_array_images, scores_array_texts, nr_top_imgs=20, nr_worst
         - num_samples (int): Number of samples in the current retrieval.
     """
     # Sort indices of scores
-    sorted_scores_images = np.sort(scores_array_images, order='score')
-    sorted_scores_texts = np.sort(scores_array_texts, order='score')
+    sorted_scores_images = np.sort(scores_array_images, order=('score', 'score_vis'))
+    sorted_scores_texts = np.sort(scores_array_texts, order=('score', 'score_vis'))
 
     # Top scores
     top_dbs_images = sorted_scores_images[-nr_top_imgs:][::-1]  # Get top `nr_top_imgs` elements, sorted descending
@@ -464,35 +469,36 @@ def visualize_dbs(data, dbs, ds_vis, texts_str, imagenet_classes, text_query= No
     # Print a header to indicate which text query we are analyzing
     if text_query is not None:
         print(f"----Decomposition for text: '{text_query}'----")
-        print_data(data, is_cosine_present=True)
+        print_data(data, is_corr_present=True)
 
     else:
         print(f"----Decomposition of Principal Component----")
-        print_data(data, is_cosine_present=False)
+        print_data(data, is_corr_present=False)
 
 
     for db, db_text, display_text, length in dbs:
-        images, labels, scores = [], [], []
+        images, labels, scores, scores_vis = [], [], [], []
 
         # Collect image samples, their class labels, and similarity scores
-        for score, image_index in db:
+        for score, score_vis, image_index in db:
             images.append(ds_vis[image_index][0])  # Image data
             labels.append(imagenet_classes[ds_vis[image_index][1]])  # Class label
-            scores.append(score)  # Cosine similarity score
+            scores.append(score)
+            scores_vis.append(score_vis)  # Cosine similarity score
 
         # Print the header describing the current subset
         print(display_text)
 
         # Prepare and display the corresponding texts with their scores
         output_rows = []
-        for score, text_index in db_text:
-            output_rows.append([texts_str[text_index], score])
-        output_df = pd.DataFrame(output_rows, columns=["Text", "Strength"])
+        for score, score_vis, text_index in db_text:
+            output_rows.append([texts_str[text_index], score, score_vis])
+        output_df = pd.DataFrame(output_rows, columns=["Text", "Cosine Similarity", "Correlation"])
         print(tabulate(output_df, headers='keys', tablefmt='psql'))
 
         # Display the images in a grid layout
         rows, cols = (length // 4, 4)  # Grid layout: 4 columns, rows derived from the number of images
-        image_grid(images, rows, cols, labels=labels, scores=scores)
+        image_grid(images, rows, cols, labels=labels, scores=scores, scores_vis=scores_vis)
 
 def visualize_principal_component(
     layer, head, princ_comp, nr_top_imgs, nr_worst_imgs, nr_cont_imgs,
@@ -537,11 +543,11 @@ def visualize_principal_component(
     # Initialize arrays to store similarity scores for images and texts
     scores_array_images = np.empty(
         final_embeddings_images.shape[0], 
-        dtype=[('score', 'f4'), ('img_index', 'i4')]
+        dtype=[('score', 'f4'), ('score_vis', 'f4'), ('img_index', 'i4')]
     )
     scores_array_texts = np.empty(
         final_embeddings_texts.shape[0], 
-        dtype=[('score', 'f4'), ('txt_index', 'i4')]
+        dtype=[('score', 'f4'), ('score_vis', 'f4'), ('txt_index', 'i4')]
     )
 
     # Create arrays of indices for referencing images and texts
@@ -556,14 +562,16 @@ def visualize_principal_component(
     texts_centered = final_embeddings_texts - mean_final_texts
 
     # Normalize embeddings to unit norm
-    texts_centered /= texts_centered.norm(dim=-1, keepdim=True)
-    images_centered /= images_centered.norm(dim=-1, keepdim=True)
 
     # Compute cosine similarity scores with the specified principal component
     vh = torch.tensor(data[0]["vh"])
+    scores_array_images["score_vis"] = ((images_centered @ vh.T)[:, princ_comp]).numpy()
+    images_centered /= images_centered.norm(dim=-1, keepdim=True)
     scores_array_images["score"] = ((images_centered @ vh.T)[:, princ_comp]).numpy()
     scores_array_images["img_index"] = indexes_images
 
+    scores_array_texts["score_vis"] = ((texts_centered @ vh.T)[:, princ_comp]).numpy()
+    texts_centered /= texts_centered.norm(dim=-1, keepdim=True)
     scores_array_texts["score"] = ((texts_centered @ vh.T)[:, princ_comp]).numpy()
     scores_array_texts["txt_index"] = indexes_texts
 

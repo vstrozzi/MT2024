@@ -58,7 +58,7 @@ def svd_data_approx(data, text_features, texts, layer, head, text_per_princ_comp
     
     # Return the closest text_features in eigen space of data matrix of top iters princ_comp
 
-    simil_matrix = text_features.T / text_features_norm.T  # Get the strongest contribution of each text feature to the princ_comps
+    simil_matrix = text_features.T  # Get the strongest contribution of each text feature to the princ_comps
     indexes_max = torch.squeeze(torch.argsort(simil_matrix, dim=-1, descending=True))[:rank, :text_per_princ_comp]
     indexes_min = torch.squeeze(torch.argsort(simil_matrix, dim=-1))[:rank, :text_per_princ_comp]
 
@@ -85,7 +85,8 @@ def svd_data_approx(data, text_features, texts, layer, head, text_per_princ_comp
         # text = sorted(text, key=lambda x: np.abs(list(x.values())[1]), reverse=True)
         # indexes_reconstruct[i] = idx_min[0] if "min" in list(text[0].keys())[0] else idx_max[0]
         results.append({"text": text, "eigen_v_emb": vh[i].tolist(), "strength_abs": s[i].item(), \
-                        "strength_rel": (100 * s[i] / tot_str).item(), "cosine_similarity": cosine_similarity[i, i].item()})   # Reconstruct original matrix with new basis
+                        "strength_rel": (100 * s[i] / tot_str).item(), "cosine_similarity": cosine_similarity[i, i].item(),
+                        "correlation": (text_features[indexes_max[:, 0], :])[i, i].item()})   # Reconstruct original matrix with new basis
 
     reconstruct = torch.zeros_like(data)
 
