@@ -255,7 +255,7 @@ def reconstruct_embeddings(data, embeddings, types, return_princ_comp=False):
 
     return reconstructed_embeddings, data
 
-def reconstruct_top_embedding(data, embedding, type, max_reconstr_score, top_k=10, approx=0.90):
+def reconstruct_top_embedding(data, embedding, type, max_reconstr_score, top_k=10, approx=0.90, classifier=None, top_indexes=None):
     """
     Reconstruct the embeddings using the principal components in data.
     Parameters:
@@ -281,9 +281,12 @@ def reconstruct_top_embedding(data, embedding, type, max_reconstr_score, top_k=1
 
 
         # Compute the current score:
-        query_repres_norm = query_repres / query_repres.norm(dim=-1, keepdim=True)
+        # query_repres_norm = query_repres / query_repres.norm(dim=-1, keepdim=True)
         # Compute the current score: how well this partial reconstruction matches the original embedding
-        score = embedding @ query_repres_norm.T
+        if classifier is None:
+            score = embedding @ query_repres.T
+        else:
+            score = embedding @ query_repres.T
 
         # If we've reached the top_k limit or our reconstruction score is good enough 
         # (relative to max_reconstr_score and meeting the approx threshold), stop adding more components.
@@ -566,12 +569,12 @@ def visualize_principal_component(
     # Compute cosine similarity scores with the specified principal component
     vh = torch.tensor(data[0]["vh"])
     scores_array_images["score_vis"] = ((images_centered @ vh.T)[:, princ_comp]).numpy()
-    images_centered /= images_centered.norm(dim=-1, keepdim=True)
+    # images_centered /= images_centered.norm(dim=-1, keepdim=True)
     scores_array_images["score"] = ((images_centered @ vh.T)[:, princ_comp]).numpy()
     scores_array_images["img_index"] = indexes_images
 
     scores_array_texts["score_vis"] = ((texts_centered @ vh.T)[:, princ_comp]).numpy()
-    texts_centered /= texts_centered.norm(dim=-1, keepdim=True)
+    # texts_centered /= texts_centered.norm(dim=-1, keepdim=True)
     scores_array_texts["score"] = ((texts_centered @ vh.T)[:, princ_comp]).numpy()
     scores_array_texts["txt_index"] = indexes_texts
 
