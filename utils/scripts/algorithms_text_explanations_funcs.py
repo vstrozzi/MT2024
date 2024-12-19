@@ -255,7 +255,7 @@ def reconstruct_embeddings(data, embeddings, types, return_princ_comp=False):
 
     return reconstructed_embeddings, data
 
-def reconstruct_top_embedding(data, embedding, type, max_reconstr_score, top_k=10, approx=0.90, classifier=None, top_indexes=None):
+def reconstruct_top_embedding(data, embedding, mean, type, max_reconstr_score, top_k=10, approx=0.90, classifier=None, top_indexes=None):
     """
     Reconstruct the embeddings using the principal components in data.
     Parameters:
@@ -281,12 +281,15 @@ def reconstruct_top_embedding(data, embedding, type, max_reconstr_score, top_k=1
 
 
         # Compute the current score:
-        # query_repres_norm = query_repres / query_repres.norm(dim=-1, keepdim=True)
+        query_repres_norm = query_repres / query_repres.norm(dim=-1, keepdim=True)
+        query_repres_norm += mean
+        query_repres_norm /= query_repres_norm.norm(dim=-1, keepdim=True)
+        embedding_dec = embedding + mean
         # Compute the current score: how well this partial reconstruction matches the original embedding
-        if classifier is None:
-            score = embedding @ query_repres.T
-        else:
-            score = embedding @ query_repres.T
+        
+        score = embedding_dec @ query_repres_norm.T
+
+
 
         # If we've reached the top_k limit or our reconstruction score is good enough 
         # (relative to max_reconstr_score and meeting the approx threshold), stop adding more components.
