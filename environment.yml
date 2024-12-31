@@ -9,6 +9,7 @@ dependencies:
   - pytorch-cuda=11.7
   - pip:
     - timm
+    - tabulate
     - einops
     - ftfy
     - scipy
