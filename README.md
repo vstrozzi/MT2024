@@ -18,9 +18,11 @@ Please download the Imagenet dataset from [here](http://calvin-vision.net/bigstu
 
 ```bash
 cd datasets
-mkdir imagenet_seg
-cd imagenet_seg
+mkdir imagenet
+cd imagenet
 wget http://calvin-vision.net/bigstuff/proj-imagenet/data/gtsegs_ijcv.mat
+wget https://image-net.org/data/ILSVRC/2012/ILSVRC2012_devkit_t12.tar.gz --no-check-certificate
+wget https://image-net.org/data/ILSVRC/2012/ILSVRC2012_img_val.tar --no-check-certificate
 ```
 
 To download the Waterbirds datasets, run:
@@ -72,7 +74,7 @@ python compute_segmentations.py --device cuda:0 --model ViT-B-16 --pretrained la
 ```
 Save the results with the `--save_img` flag.
 
-### TextSpan
+### Spectral Decomposition
 
 Explain the internal components of the CLIP-embeddings ViT-Encoder's for images using with text (ours: svd_data_approx, their: text_span)
 ```bash
